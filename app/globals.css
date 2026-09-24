@@ -1,0 +1,409 @@
+:root {
+  color-scheme: dark;
+  font-family: "Arial Narrow", "Roboto Condensed", "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #060914;
+  color: #eafaff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  min-width: 320px;
+  min-height: 320px;
+  background: #060914;
+}
+
+button {
+  font: inherit;
+}
+
+.game-shell {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #070914;
+  isolation: isolate;
+}
+
+.game-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.screen-grade {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(3, 6, 18, 0.12) 0%, transparent 25%, transparent 70%, rgba(3, 6, 18, 0.38) 100%),
+    radial-gradient(ellipse at 50% 46%, transparent 34%, rgba(3, 6, 17, 0.34) 100%);
+}
+
+.scanlines {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.025;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(185, 237, 255, 0.13) 0,
+    rgba(185, 237, 255, 0.13) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  mix-blend-mode: screen;
+}
+
+.start-screen {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 8.8vw;
+  background:
+    linear-gradient(90deg, rgba(4, 7, 18, 0.85) 0%, rgba(4, 7, 18, 0.67) 27%, rgba(5, 8, 19, 0.2) 57%, transparent 100%),
+    linear-gradient(0deg, rgba(4, 7, 18, 0.36), transparent 55%);
+  transition: opacity 760ms ease, visibility 760ms ease;
+}
+
+.start-screen-dismissed {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.title-lockup {
+  position: relative;
+  width: max-content;
+  max-width: 100%;
+  padding: 2px 0 34px 2px;
+  animation: title-appear 700ms cubic-bezier(0.2, 0.74, 0.22, 1) both;
+}
+
+.title-lockup::before {
+  position: absolute;
+  z-index: -1;
+  top: -76px;
+  left: -70px;
+  width: 470px;
+  height: 490px;
+  border-left: 1px solid rgba(117, 230, 250, 0.12);
+  background: radial-gradient(ellipse at 8% 48%, rgba(4, 11, 26, 0.57), transparent 68%);
+  content: "";
+  pointer-events: none;
+}
+
+.game-title {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 35px;
+  color: #f4fbff;
+  font-family: "Segoe UI", "Arial Narrow", sans-serif;
+  font-size: clamp(58px, 9.2vw, 132px);
+  font-weight: 850;
+  letter-spacing: -0.088em;
+  line-height: 0.8;
+  text-shadow: 0 6px 44px rgba(108, 202, 255, 0.24);
+}
+
+.game-title > span:first-child {
+  color: #f8fdff;
+}
+
+.title-second-line {
+  margin: 13px 0 0 0.23em;
+  color: #77eefa;
+  font-size: 0.43em;
+  font-weight: 600;
+  letter-spacing: 0.34em;
+  line-height: 1.05;
+  text-shadow: 0 0 25px rgba(77, 222, 242, 0.4);
+}
+
+.play-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 212px;
+  height: 58px;
+  padding: 0 19px 0 24px;
+  overflow: hidden;
+  border: 1px solid rgba(109, 240, 250, 0.9);
+  border-radius: 1px;
+  background: linear-gradient(104deg, rgba(21, 198, 214, 0.24), rgba(10, 29, 45, 0.56) 70%);
+  box-shadow: inset 0 0 22px rgba(43, 205, 229, 0.14), 0 0 20px rgba(29, 198, 225, 0.17);
+  color: #f5feff;
+  cursor: pointer;
+  font-family: "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.32em;
+  text-align: left;
+  transition: background 160ms ease, box-shadow 160ms ease, transform 160ms ease, border-color 160ms ease;
+}
+
+.play-button::before,
+.play-button::after {
+  position: absolute;
+  width: 12px;
+  height: 2px;
+  background: #ff4d9e;
+  content: "";
+  transition: width 160ms ease;
+}
+
+.play-button::before {
+  top: -1px;
+  right: 13px;
+}
+
+.play-button::after {
+  bottom: -1px;
+  left: 13px;
+}
+
+.play-button:hover {
+  transform: translateY(-1px);
+  border-color: #d5fbff;
+  background: linear-gradient(104deg, rgba(20, 219, 232, 0.42), rgba(12, 39, 56, 0.7) 72%);
+  box-shadow: inset 0 0 28px rgba(43, 205, 229, 0.18), 0 0 30px rgba(29, 198, 225, 0.29);
+}
+
+.play-button:hover::before,
+.play-button:hover::after {
+  width: 24px;
+}
+
+.play-button:focus-visible {
+  outline: 2px solid #ff61a9;
+  outline-offset: 5px;
+}
+
+.play-arrow {
+  color: #76f1f8;
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: 0;
+  transition: transform 160ms ease;
+}
+
+.play-button:hover .play-arrow {
+  transform: translate(2px, -2px);
+}
+
+.drive-hud {
+  position: absolute;
+  z-index: 2;
+  right: clamp(24px, 5vw, 78px);
+  bottom: clamp(22px, 5vh, 48px);
+  display: grid;
+  grid-template-columns: auto 154px;
+  align-items: end;
+  gap: 20px;
+  color: #effcff;
+  animation: hud-appear 440ms 220ms ease both;
+}
+
+.speedometer {
+  position: relative;
+  display: grid;
+  width: 124px;
+  height: 124px;
+  place-items: center;
+  filter: drop-shadow(0 3px 14px rgba(42, 223, 247, 0.2));
+}
+
+.speed-ring,
+.speed-ring svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform: rotate(-133deg);
+}
+
+.speed-ring-track,
+.speed-ring-value {
+  fill: none;
+  stroke-width: 2.2px;
+}
+
+.speed-ring-track {
+  stroke: rgba(157, 220, 237, 0.21);
+  stroke-dasharray: 320px 321px;
+}
+
+.speed-ring-value {
+  stroke: #74f1fb;
+  stroke-linecap: round;
+  stroke-dasharray: 320px 321px;
+  filter: drop-shadow(0 0 5px rgba(82, 235, 249, 0.8));
+  transition: stroke-dashoffset 180ms linear, stroke 180ms ease;
+}
+
+.speed-boosting .speed-ring-value {
+  stroke: #ff64ac;
+  filter: drop-shadow(0 0 7px rgba(255, 90, 171, 0.95));
+}
+
+.speed-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  transform: translateY(-1px);
+}
+
+.speed-number {
+  font-size: 38px;
+  font-weight: 640;
+  letter-spacing: -0.075em;
+  line-height: 0.9;
+  font-variant-numeric: tabular-nums;
+}
+
+.speed-unit {
+  color: rgba(183, 222, 236, 0.72);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+}
+
+.boost-meter {
+  width: 154px;
+  padding-bottom: 13px;
+}
+
+.boost-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-family: "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.21em;
+}
+
+.boost-label {
+  color: rgba(190, 229, 239, 0.77);
+}
+
+.boost-value {
+  color: #72eaf7;
+  font-variant-numeric: tabular-nums;
+}
+
+.boost-track {
+  height: 4px;
+  overflow: hidden;
+  background: rgba(155, 196, 214, 0.22);
+  box-shadow: 0 0 0 1px rgba(200, 234, 243, 0.04);
+}
+
+.boost-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #25b9db, #78f1f4);
+  box-shadow: 0 0 11px rgba(69, 232, 249, 0.8);
+  transition: width 90ms linear;
+}
+
+.boost-fill-active {
+  background: linear-gradient(90deg, #d22a8c, #ff7ac0);
+  box-shadow: 0 0 13px rgba(249, 70, 168, 0.88);
+}
+
+@keyframes title-appear {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes hud-appear {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 680px) {
+  .start-screen {
+    align-items: flex-end;
+    padding: 10vw 8vw 18vh;
+    background: linear-gradient(0deg, rgba(4, 7, 18, 0.78), rgba(4, 7, 18, 0.18) 72%, rgba(4, 7, 18, 0.24));
+  }
+
+  .title-lockup {
+    padding-bottom: 0;
+  }
+
+  .title-lockup::before {
+    top: -44px;
+    left: -26px;
+    width: 82vw;
+    height: 360px;
+  }
+
+  .game-title {
+    margin-bottom: 26px;
+    font-size: clamp(62px, 16vw, 94px);
+  }
+
+  .play-button {
+    width: 190px;
+    height: 54px;
+  }
+
+  .drive-hud {
+    right: 20px;
+    bottom: 20px;
+    grid-template-columns: auto 112px;
+    gap: 11px;
+  }
+
+  .speedometer {
+    width: 98px;
+    height: 98px;
+  }
+
+  .speed-number {
+    font-size: 31px;
+  }
+
+  .boost-meter {
+    width: 112px;
+    padding-bottom: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
