@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { nearestRoad, nearestBlock } from './city-layout';
 
 type Collider = { x: number; z: number; hx: number; hz: number };
 export type CoveredRoad = Collider & { ceiling: number; label: string };
@@ -63,9 +64,17 @@ export function addInfrastructure(scene: THREE.Scene, colliders: Collider[]) {
     { x: -22, z: 44, sideways: true, tunnel: false, label: 'LOWER / CANAL ROAD' },
     { x: 66, z: -88, sideways: true, tunnel: false, label: 'EAST / UNDERPASS' },
     { x: -110, z: 132, sideways: true, tunnel: false, label: 'SOUTH / FREIGHT LINE' },
+    { x: -220, z: -154, sideways: false, tunnel: true, label: 'FAR WEST / DEEP TUNNEL' },
+    { x: 220, z: 154, sideways: false, tunnel: true, label: 'FAR EAST / EXPRESS TUNNEL' },
+    { x: -154, z: 220, sideways: true, tunnel: false, label: 'SOUTH / OUTER BYPASS' },
+    { x: 264, z: -198, sideways: true, tunnel: false, label: 'NORTH / ORBITAL ROAD' },
+    { x: -308, z: 0, sideways: false, tunnel: true, label: 'OUTER WEST / SUPPLY LINK' },
+    { x: 0, z: -308, sideways: true, tunnel: false, label: 'NORTH / CARGO UNDERPASS' },
   ];
   for (const [index, config] of configurations.entries()) {
-    const { x, z, sideways, tunnel, label } = config;
+    const { sideways, tunnel, label } = config;
+    const x = sideways ? nearestBlock(config.x) : nearestRoad(config.x);
+    const z = sideways ? nearestRoad(config.z) : nearestBlock(config.z);
     const group = new THREE.Group(); group.position.set(x, 0, z); group.rotation.y = sideways ? Math.PI / 2 : 0; scene.add(group);
     const length = 25, half = length / 2, ceiling = tunnel ? 7.8 : 7.2;
     covered.push({ x, z, hx: sideways ? half : 9.5, hz: sideways ? 9.5 : half, ceiling: ceiling + .5, label });
@@ -139,8 +148,8 @@ export function addInfrastructure(scene: THREE.Scene, colliders: Collider[]) {
     }
   }
   // Street furniture is set behind the kerb: shelters, seats, cabinets and drain gratings.
-  for (const [x, z] of [[-10.8, -22], [54.8, 22], [-98.8, 66], [142.8, -66], [10.8, 110], [-54.8, -110]]) {
-    const shelter = new THREE.Group(); shelter.position.set(x, 0, z); scene.add(shelter);
+  for (const [x, z] of [[-10.8, -22], [54.8, 22], [-98.8, 66], [142.8, -66], [10.8, 110], [-54.8, -110], [-186.8, 154], [230.8, -154], [-142.8, -198], [274.8, 110], [-318.8, 22], [10.8, -286]]) {
+    const shelter = new THREE.Group(); shelter.position.set(x + 22, 0, z - 22); scene.add(shelter);
     const side = x < 0 ? -1 : 1;
     for (const end of [-1, 1]) box(shelter, side * .65, 1.55, end * 2.3, .08, 2.8, .08, steel);
     box(shelter, side * .35, 3, 0, 1.6, .13, 5.1, steel);
@@ -156,19 +165,20 @@ export function addInfrastructure(scene: THREE.Scene, colliders: Collider[]) {
   }
   const manholeMat = new THREE.MeshStandardMaterial({ color: 0x343a3e, metalness: .45, roughness: .78 });
   for (let i = 0; i < 22; i++) {
-    const x = ((i % 7) - 3) * 44 + 6.8, z = (Math.floor(i / 7) - 2) * 44 + 20;
+    const x = ((i % 7) - 3) * 44 + 22 + 6.8, z = (Math.floor(i / 7) - 2) * 44;
     const cover = new THREE.Mesh(new THREE.CylinderGeometry(.48, .48, .026, 24), manholeMat);
     cover.position.set(x, .05, z); scene.add(cover);
     for (let j = 0; j < 4; j++) box(scene, x + (j - 1.5) * .15, .067, z, .027, .007, .62, rubber);
   }
   // Small, localized neutral pools replace unmotivated expanses of saturated light.
-  for (const x of [-88, 0, 88]) for (const z of [-110, -22, 66, 154]) for (const side of [-1, 1]) {
-    const sx = x + side * 9.6;
-    box(scene, sx, 3.9, z, .12, 7.8, .12, steel);
-    box(scene, sx - side * .6, 7.7, z, 1.3, .1, .12, steel);
-    box(scene, sx - side * 1.16, 7.6, z, .48, .075, .7, coolLamp);
+  for (const x of [-308, -220, -132, -88, 0, 88, 132, 220, 308]) for (const z of [-286, -198, -110, -22, 66, 154, 242, 330]) for (const side of [-1, 1]) {
+    const sx = nearestRoad(x) + side * 9.6;
+    const blockZ = nearestBlock(z);
+    box(scene, sx, 3.9, blockZ, .12, 7.8, .12, steel);
+    box(scene, sx - side * .6, 7.7, blockZ, 1.3, .1, .12, steel);
+    box(scene, sx - side * 1.16, 7.6, blockZ, .48, .075, .7, coolLamp);
     if (side > 0) {
-      const lamp = new THREE.PointLight(0xc7d5e3, 55, 21, 2); lamp.position.set(sx - side * 1.16, 7.4, z); scene.add(lamp);
+      const lamp = new THREE.PointLight(0xc7d5e3, 55, 21, 2); lamp.position.set(sx - side * 1.16, 7.4, blockZ); scene.add(lamp);
     }
   }
   return covered;

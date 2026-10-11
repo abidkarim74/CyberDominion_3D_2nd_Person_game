@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import ts from 'typescript';
+import * as THREE from 'three';
+const url=source=>'data:text/javascript;base64,'+Buffer.from(ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText).toString('base64');
+const layout=url(await readFile('lib/city-layout.ts','utf8'));
+const collisionSource=(await readFile('lib/city-collision.ts','utf8')).replace("'three'",JSON.stringify(import.meta.resolve('three'))).replace("'./city-layout'",JSON.stringify(layout));
+const {ColliderGrid,collectWorldColliders}=await import(url(collisionSource));
+const fast=new ColliderGrid([{x:0,z:0,hx:.04,hz:.04}]);
+assert.ok(fast.sweep({x:-20,z:0},{x:20,z:0},0),'Swept movement hits a thin object even if both endpoints are clear');
+assert.equal(fast.sweep({x:-20,z:5},{x:20,z:5},0),null,'Nearby clear paths stay clear');
+const scene=new THREE.Scene(), mat=new THREE.MeshBasicMaterial();
+function cube(x,y,z,w,h,d){const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);mesh.position.set(x,y,z);scene.add(mesh);return mesh}
+cube(10,1,0,2,2,2);cube(0,.12,0,5,.24,5);cube(0,6,20,8,.5,10);
+const arch=new THREE.Mesh(new THREE.TorusGeometry(8.9,.16,6,24,Math.PI),mat);arch.position.set(0,.5,40);scene.add(arch);
+const group=new THREE.Group();group.position.set(-66,0,-44);group.rotation.y=Math.PI/2;scene.add(group);
+const rotated=new THREE.Mesh(new THREE.BoxGeometry(1,2,2),mat);rotated.position.set(10,1,0);group.add(rotated);
+const instances=new THREE.InstancedMesh(new THREE.BoxGeometry(1,2,1),mat,3);instances.count=2;const matrix=new THREE.Matrix4();instances.setMatrixAt(0,matrix.makeTranslation(-20,1,0));instances.setMatrixAt(1,matrix.makeTranslation(-20,1,10));scene.add(instances);
+const colliders=[], grid=collectWorldColliders(scene,colliders);
+assert.ok(grid.sweep({x:0,z:0},{x:20,z:0},0),'Visible solid boxes block the car');
+assert.equal(grid.sweep({x:0,z:10},{x:0,z:30},0),null,'Overhead structures do not block driving');
+assert.equal(grid.sweep({x:0,z:30},{x:0,z:50},0),null,'An arch opening remains drivable');
+assert.ok(grid.sweep({x:8.9,z:30},{x:8.9,z:50},0),'Arch feet are solid');
+assert.ok(grid.sweep({x:-66,z:-64},{x:-66,z:-44},0),'Rotated child geometry uses its world position');
+assert.ok(grid.sweep({x:-20,z:-5},{x:-20,z:5},0),'Instanced objects receive collisions');
+assert.equal(grid.sweep({x:0,z:-5},{x:0,z:5},0),null,'Unused instances and low pavement do not create obstacles');
+assert.ok(colliders.every(c=>!(c.x===0&&c.z===40&&c.hx>5)),'Arches never get a solid box across their opening');
+console.log(JSON.stringify({checks:10,colliders:colliders.length,stats:grid.stats},null,2));

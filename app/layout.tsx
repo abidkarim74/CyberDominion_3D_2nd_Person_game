@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Neon Nocturne',
-  description: 'Drive the rain-soaked streets of a neon city after dark.',
+  description: 'Drive a snow-covered cyberpunk megacity after dark, through electric skylines, neon streets and an industrial waterfront.',
   icons: { icon: '/favicon.svg' },
 };
 

@@ -71,8 +71,36 @@ button {
     transparent 1px,
     transparent 4px
   );
-  mix-blend-mode: screen;
 }
+
+.city-ident {
+  position: absolute;
+  z-index: 3;
+  top: 25px;
+  left: clamp(24px, 5vw, 78px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.city-ident-mark {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 5px 9px 7px;
+  border: 1px solid rgba(116, 234, 246, .38);
+  border-left: 2px solid #75edf7;
+  background: rgba(6, 13, 24, .82);
+  color: #d5faff;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -.06em;
+}
+
+.city-ident-mark > span { color: #ff679f; font: 8px "Consolas", monospace; letter-spacing: 0; }
+.city-ident-copy { display: flex; flex-direction: column; gap: 4px; color: #d0e3e9; font: 700 10px "Segoe UI", sans-serif; letter-spacing: .19em; }
+.city-ident-copy > span { color: #829ba9; font: 8px "Consolas", monospace; letter-spacing: .09em; }
 
 .start-screen {
   position: absolute;
@@ -97,27 +125,39 @@ button {
   position: relative;
   width: max-content;
   max-width: 100%;
-  padding: 2px 0 34px 2px;
+  padding: 2px 0 0 2px;
   animation: title-appear 700ms cubic-bezier(0.2, 0.74, 0.22, 1) both;
 }
 
 .title-lockup::before {
   position: absolute;
   z-index: -1;
-  top: -76px;
-  left: -70px;
+  top: -22px;
+  left: -36px;
   width: 470px;
   height: 490px;
-  border-left: 1px solid rgba(117, 230, 250, 0.12);
+  border-left: 1px solid rgba(117, 230, 250, 0.17);
   background: radial-gradient(ellipse at 8% 48%, rgba(4, 11, 26, 0.57), transparent 68%);
   content: "";
   pointer-events: none;
 }
 
+.title-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 27px;
+  color: #edb16e;
+  font: 600 9px "Consolas", monospace;
+  letter-spacing: .2em;
+}
+
+.title-eyebrow > span { width: 20px; height: 1px; background: currentColor; box-shadow: 0 0 8px rgba(255, 178, 85, .3); }
+
 .game-title {
   display: flex;
   flex-direction: column;
-  margin: 0 0 35px;
+  margin: 0 0 26px;
   color: #f4fbff;
   font-family: "Segoe UI", "Arial Narrow", sans-serif;
   font-size: clamp(58px, 9.2vw, 132px);
@@ -126,6 +166,39 @@ button {
   line-height: 0.8;
   text-shadow: 0 6px 44px rgba(108, 202, 255, 0.24);
 }
+
+.game-intro { margin: 0 0 26px; color: #abbfcd; font: 400 13px/1.65 "Segoe UI", sans-serif; letter-spacing: .015em; }
+
+.control-guide {
+  display: grid;
+  grid-template-columns: 1.7fr 1fr 1fr;
+  gap: 15px 22px;
+  width: 380px;
+  max-width: 100%;
+  margin: 28px 0 0;
+  padding-top: 17px;
+  border-top: 1px solid rgba(121, 192, 211, .19);
+  font-family: "Segoe UI", sans-serif;
+}
+.control-guide > div { min-width: 0; }
+.control-guide dt { display: flex; align-items: center; gap: 1px; height: 14px; color: #d2e8ef; font: 600 9px "Consolas", monospace; letter-spacing: .04em; white-space: nowrap; }
+.control-guide dt > span { padding: 0 3px; color: #526b7d; }
+.control-guide kbd { font: inherit; }
+.control-guide dd { margin: 6px 0 0; color: #87a1b2; font-size: 10px; letter-spacing: .02em; }
+
+.start-world-label {
+  position: absolute;
+  right: clamp(24px, 5vw, 78px);
+  bottom: 31px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #8ca6b6;
+  font: 9px "Consolas", monospace;
+  letter-spacing: .09em;
+}
+.start-world-label > span { color: #72cfdb; }
+.start-world-label i { width: 3px; height: 3px; background: #ecaa65; }
 
 .game-title > span:first-child {
   color: #f8fdff;
@@ -221,9 +294,19 @@ button {
   display: grid;
   grid-template-columns: auto 154px;
   align-items: end;
-  gap: 20px;
+  gap: 12px 20px;
   color: #effcff;
   animation: hud-appear 440ms 220ms ease both;
+}
+
+.drive-hud::before {
+  position: absolute;
+  z-index: -1;
+  inset: -8px -16px -10px;
+  border-bottom: 1px solid rgba(113, 221, 239, .2);
+  background: linear-gradient(90deg, transparent, rgba(5, 11, 23, .63) 24%, rgba(5, 11, 23, .8));
+  content: "";
+  pointer-events: none;
 }
 
 .speedometer {
@@ -294,8 +377,11 @@ button {
 
 .boost-meter {
   width: 154px;
-  padding-bottom: 13px;
+  padding-bottom: 11px;
 }
+
+.drive-state { display: block; margin-top: 9px; color: #90aab7; font: 7px "Consolas", monospace; letter-spacing: .13em; }
+.drive-state-active { color: #ff80b3; }
 
 .boost-label-row {
   display: flex;
@@ -337,6 +423,56 @@ button {
   box-shadow: 0 0 13px rgba(249, 70, 168, 0.88);
 }
 
+/* ── Fire indicator ── */
+.fire-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  padding-top: 0;
+  opacity: 0.8;
+  transition: opacity 0.15s ease;
+}
+
+.fire-indicator.fire-active {
+  opacity: 1;
+}
+
+.fire-crosshair {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: #91abb7;
+  stroke-width: 1.5;
+  transition: stroke 0.1s ease, filter 0.1s ease;
+}
+
+.fire-active .fire-crosshair {
+  stroke: #ffc36d;
+  filter: drop-shadow(0 0 6px rgba(255, 178, 76, 0.6));
+  animation: crosshair-pulse 0.12s ease-in-out infinite alternate;
+}
+
+.fire-label {
+  font-family: "Segoe UI", sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #a2bac6;
+  transition: color 0.1s ease, text-shadow 0.1s ease;
+}
+
+.fire-active .fire-label {
+  color: #ffc36d;
+  text-shadow: 0 0 8px rgba(255, 178, 76, 0.4);
+}
+
+@keyframes crosshair-pulse {
+  from { transform: scale(0.92); opacity: 0.85; }
+  to { transform: scale(1.08); opacity: 1; }
+}
+
 @keyframes title-appear {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
@@ -349,8 +485,8 @@ button {
 
 @media (max-width: 680px) {
   .start-screen {
-    align-items: flex-end;
-    padding: 10vw 8vw 18vh;
+    align-items: center;
+    padding: 75px 8vw 60px;
     background: linear-gradient(0deg, rgba(4, 7, 18, 0.78), rgba(4, 7, 18, 0.18) 72%, rgba(4, 7, 18, 0.24));
   }
 
@@ -359,16 +495,25 @@ button {
   }
 
   .title-lockup::before {
-    top: -44px;
-    left: -26px;
+    top: -20px;
+    left: -18px;
     width: 82vw;
-    height: 360px;
+    height: 440px;
   }
 
   .game-title {
-    margin-bottom: 26px;
+    margin-bottom: 22px;
     font-size: clamp(62px, 16vw, 94px);
   }
+
+  .title-eyebrow { margin-bottom: 22px; font-size: 8px; letter-spacing: .15em; }
+  .game-intro { font-size: 12px; margin-bottom: 22px; }
+  .control-guide { width: 330px; gap: 14px 15px; margin-top: 23px; }
+  .control-guide dt { font-size: 8px; }
+  .control-guide dd { font-size: 9px; }
+  .city-ident { top: 18px; left: 20px; }
+  .city-ident-copy > span { font-size: 7px; }
+  .start-world-label { left: 8vw; right: auto; bottom: 24px; gap: 8px; font-size: 7px; }
 
   .play-button {
     width: 190px;
@@ -407,3 +552,132 @@ button {
     transition-duration: 0.01ms !important;
   }
 }
+
+.camera-toggle {
+  position: absolute;
+  top: 24px;
+  right: clamp(24px, 5vw, 78px);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  border: 1px solid rgba(115, 216, 232, .28);
+  border-right: 2px solid rgba(119, 238, 248, .62);
+  border-radius: 1px;
+  background: rgba(5, 12, 23, .85);
+  color: #bbd3dd;
+  font: 600 10px "Segoe UI", sans-serif;
+  letter-spacing: .12em;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+.camera-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.camera-toggle kbd { padding: 2px 5px; border: 1px solid rgba(132, 175, 190, .3); border-radius: 3px; font: 11px monospace; color: #7e9fac; }
+.camera-toggle:hover { color: #d8fbff; border-color: #76c5d6; }
+.camera-toggle:focus-visible { outline: 2px solid #87dae8; outline-offset: 4px; }
+.car-inspect-toggle { top: 73px; }
+.car-inspect-toggle[aria-pressed="true"] { color: #efffff; border-color: #71d4e6; background: rgba(12, 35, 48, .92); }
+.car-inspect-help { position: absolute; z-index: 3; top: 121px; right: clamp(24px, 5vw, 78px); margin: 0; color: #adc5d3; text-align: right; font: 10px/1.8 "Consolas", monospace; text-shadow: 0 1px 4px #03070d; pointer-events: none; }
+/* The cockpit carries the instruments; keep their text available to assistive technology. */
+.is-driver-view .drive-hud, .is-orbit-view .drive-hud { width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.is-orbit-view .city-minimap { display: none; }
+@media (max-width: 640px) { .camera-toggle { top: 16px; right: 16px; gap: 7px; padding: 9px 10px; font-size: 9px; } }
+@media (max-width: 640px) { .car-inspect-toggle { top: 61px; } .car-inspect-help { top: 107px; right: 16px; font-size: 9px; } }
+@media (max-width: 370px) { .is-driving .city-ident-copy { display: none; } }
+
+/* Live north-up street map, independent of the selected driving camera. */
+.city-minimap {
+  position: absolute;
+  left: clamp(24px, 5vw, 78px);
+  bottom: 30px;
+  z-index: 3;
+  width: clamp(190px, 19vw, 250px);
+  border: 1px solid rgba(116, 187, 204, .35);
+  border-top: 2px solid rgba(106, 226, 237, .7);
+  border-radius: 1px;
+  overflow: hidden;
+  background: rgba(5, 13, 23, .9);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .25), inset 0 0 24px rgba(30, 92, 114, .08);
+  font: 600 9px "Segoe UI", sans-serif;
+  letter-spacing: .13em;
+  pointer-events: none;
+}
+.minimap-header,
+.minimap-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+.minimap-header { color: #c6e5ed; border-bottom: 1px solid rgba(116, 187, 204, .14); }
+.minimap-live { display: flex; align-items: center; gap: 5px; color: #e8b172; font-size: 8px; }
+.minimap-live i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; box-shadow: 0 0 6px rgba(128, 218, 192, .55); }
+.minimap-map { position: relative; }
+.minimap-north { position: absolute; top: 5px; right: 9px; color: #b8dbe4; font-size: 8px; }
+.minimap-svg { display: block; width: 100%; height: auto; }
+.minimap-city { fill: #0a1324; stroke: #4c617c; stroke-width: 2; }
+.minimap-grid-axis { fill: none; stroke: #dc6497; stroke-width: 1; stroke-dasharray: 8 16; opacity: .45; }
+.minimap-roads { fill: none; stroke: #213c52; }
+.minimap-road-centers { fill: none; stroke: #6f9fac; stroke-width: 1.5; opacity: .48; }
+.minimap-blocks { fill: #15243b; stroke: #385069; stroke-width: 1; }
+.minimap-car-halo { fill: rgba(85, 232, 246, .17); stroke: rgba(85, 232, 246, .65); stroke-width: 3; }
+.minimap-car-arrow { fill: #e2fcff; stroke: #47e8f5; stroke-width: 3; stroke-linejoin: round; }
+.minimap-footer { padding-top: 8px; padding-bottom: 9px; border-top: 1px solid rgba(116, 187, 204, .14); color: #7e9fac; font-size: 7px; letter-spacing: .1em; }
+.minimap-you { display: flex; align-items: center; gap: 5px; color: #c6e5ed; }
+.minimap-you > span { color: #66ebf5; font-size: 10px; }
+@media (max-width: 680px) {
+  .city-minimap { left: 16px; bottom: 20px; width: clamp(118px, 28vw, 164px); }
+  .minimap-header { padding: 8px; font-size: 8px; letter-spacing: .08em; }
+  .minimap-live { font-size: 7px; gap: 3px; }
+  .minimap-footer { padding: 6px 8px; font-size: 6px; letter-spacing: .04em; }
+  .minimap-you { gap: 3px; }
+}
+@media (max-height: 560px) and (min-width: 681px) {
+  .city-minimap { bottom: 16px; left: 20px; width: 150px; }
+  .minimap-header { padding: 7px 9px; }
+  .minimap-footer { padding: 6px 9px; }
+}
+@media (max-width: 380px) {
+  .drive-hud { right: 12px; grid-template-columns: auto 72px; gap: 8px; }
+  .boost-meter { width: 72px; }
+  .speedometer { width: 86px; height: 86px; }
+}
+
+.minimap-water { fill: #0d2738; }
+
+@media (max-height: 560px) {
+  .start-screen { padding-top: 68px; padding-bottom: 36px; }
+  .title-lockup { display: grid; grid-template-columns: auto auto; column-gap: 34px; align-items: start; }
+  .title-eyebrow { grid-column: 1; margin-bottom: 20px; }
+  .game-title { grid-column: 1; font-size: clamp(56px, 9vw, 82px); margin-bottom: 16px; }
+  .game-intro { grid-column: 1; font-size: 11px; margin-bottom: 18px; }
+  .play-button { grid-column: 1; height: 46px; }
+  .control-guide { grid-column: 2; grid-row: 2 / 5; grid-template-columns: 1fr 1fr; width: 230px; margin-top: 0; row-gap: 19px; }
+  .start-world-label { bottom: 16px; }
+}
+
+@media (max-height: 560px) and (max-width: 580px) {
+  .title-lockup { column-gap: 20px; }
+  .control-guide { width: 150px; grid-template-columns: 1fr 1fr; column-gap: 12px; }
+  .control-guide > div:first-child { grid-column: 1 / -1; }
+  .title-eyebrow { font-size: 7px; letter-spacing: .06em; }
+  .game-title { font-size: 52px; }
+  .play-button { width: 146px; }
+  .city-ident-copy { display: none; }
+}
+
+@media (max-height: 420px) and (max-width: 580px) {
+  .start-screen { padding: 55px 8vw 25px; }
+  .title-lockup { display: block; }
+  .title-eyebrow, .game-intro, .start-world-label { display: none; }
+  .game-title { font-size: 46px; margin-bottom: 15px; }
+  .play-button { width: 168px; height: 40px; }
+  .control-guide { grid-template-columns: 1.7fr 1fr 1fr; width: 330px; margin-top: 17px; padding-top: 10px; gap: 11px 12px; }
+  .control-guide > div:first-child { grid-column: auto; }
+  .control-guide dd { margin-top: 4px; }
+}
+
+.model-credit { position: absolute; right: 24px; bottom: 18px; color: rgba(205,219,233,.55); font-size: 9px; letter-spacing: .06em; text-decoration: none; }
+.model-credit:hover { color: #e7edf5; }
+@media (max-width: 600px) { .model-credit { right: 14px; bottom: 10px; font-size: 8px; } }

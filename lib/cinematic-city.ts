@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { addCyberpunkDistrict, type DistrictInstanceCell } from './cyberpunk-district';
 
 const CYAN = 0x35cde8;
 const PINK = 0xff347f;
@@ -19,71 +20,210 @@ function cable(parent: THREE.Object3D, points: THREE.Vector3[], radius = .045) {
   parent.add(mesh);
 }
 
-function advertisement(index: number) {
-  const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 768;
-  const c = canvas.getContext('2d')!;
-  const warm = index % 2 === 0;
-  const color = warm ? '#ff387a' : '#42e2ff';
-  c.fillStyle = '#040813'; c.fillRect(0, 0, 512, 768);
-  const glow = c.createRadialGradient(250, 310, 20, 250, 310, 330);
-  glow.addColorStop(0, warm ? '#b91762' : '#08739b'); glow.addColorStop(1, '#040813');
-  c.fillStyle = glow; c.fillRect(0, 0, 512, 768);
-  c.strokeStyle = color; c.lineWidth = 3;
-  c.strokeRect(18, 18, 476, 732);
-  c.fillStyle = color; c.font = '20px monospace'; c.fillText('NIGHT CITY / BROADCAST 0' + index, 40, 59);
-  c.save(); c.translate(256, 308);
-  for (let i = 0; i < 7; i++) {
-    c.rotate(.19); c.strokeStyle = i % 2 ? '#d6fcff' : color;
-    c.strokeRect(-125 + i * 10, -125 + i * 10, 250 - i * 20, 250 - i * 20);
-  }
-  c.restore();
-  c.fillStyle = '#edfaff'; c.textAlign = 'center'; c.font = '900 85px Arial';
-  c.fillText(['AFTER', 'ORBIT', 'NEURO', 'KAIRO'][index % 4], 256, 557);
-  c.font = '900 58px Arial'; c.fillStyle = color;
-  c.fillText(['HOURS', 'SYSTEMS', 'LINK', 'DISTRICT'][index % 4], 256, 623);
-  c.font = '19px monospace'; c.fillStyle = '#c4dbe6'; c.fillText('THE FUTURE IS ALREADY HERE', 256, 698);
-  c.fillStyle = 'rgba(0,0,0,.25)'; for (let y = 0; y < 768; y += 6) c.fillRect(0, y, 512, 2);
-  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
 /** Static geometry is merged by material and city block so detail has a bounded draw cost. */
-export function batchArchitecture(scene: THREE.Object3D) {
-  scene.updateMatrixWorld(true);
+export function batchArchitecture(scene: THREE.Object3D, includeDynamic = false) {
+  // Assemblies can be nested below newly positioned parents when they are first batched.
+  scene.updateWorldMatrix(true, true);
+  const rootInverse = scene.matrixWorld.clone().invert();
   const buckets = new Map<string, { material: THREE.Material; geometries: THREE.BufferGeometry[]; meshes: THREE.Mesh[] }>();
+  const colorMaterials = new Map<string, THREE.MeshBasicMaterial>();
   scene.traverse((object) => {
-    if (!(object instanceof THREE.Mesh) || object instanceof THREE.InstancedMesh || object.userData.dynamic || Array.isArray(object.material)) return;
+    if (!(object instanceof THREE.Mesh) || object instanceof THREE.InstancedMesh || (!includeDynamic && object.userData.dynamic) || Array.isArray(object.material)) return;
     if (object.material.transparent || object.material instanceof THREE.ShaderMaterial) return;
     const m = object.material as THREE.MeshStandardMaterial;
-    const p = object.getWorldPosition(new THREE.Vector3());
-    const signature = [m.type, m.color?.getHex(), m.emissive?.getHex(), m.emissiveIntensity, m.metalness, m.roughness,
-      m.map?.uuid, m.emissiveMap?.uuid, m.bumpMap?.uuid, m.bumpScale, m.envMapIntensity, m.side, m.toneMapped, Math.floor(p.x / 176), Math.floor(p.z / 176)].join('|');
+    // Absolute-coordinate curves have their mesh origin at zero. Bounds locate their actual block.
+    object.geometry.computeBoundingBox();
+    const worldBounds = object.geometry.boundingBox!.clone().applyMatrix4(object.matrixWorld);
+    const p = worldBounds.getCenter(new THREE.Vector3());
+    const heightClass = worldBounds.max.y <= 12 ? 0 : worldBounds.max.y <= 30 ? 1 : 2;
+    const cellSize = heightClass < 2 ? 132 : 352;
+    // Plain static accents can carry their hue in vertices and share a shader/material.
+    // Keep textured/custom facades and movable car/aircraft assemblies on their own path.
+    const basic = object.material instanceof THREE.MeshBasicMaterial ? object.material : undefined;
+    const bakeColor = scene instanceof THREE.Scene && !includeDynamic && basic && basic.constructor === THREE.MeshBasicMaterial &&
+      !basic.map && !basic.envMap && !basic.lightMap && !basic.aoMap && !basic.alphaMap && !basic.vertexColors && !basic.wireframe &&
+      !basic.clippingPlanes?.length && basic.blending === THREE.NormalBlending && !('defines' in basic) &&
+      basic.onBeforeCompile === THREE.Material.prototype.onBeforeCompile && basic.customProgramCacheKey === THREE.Material.prototype.customProgramCacheKey;
+    let material: THREE.Material = m;
+    let materialKey = [m.type, m.color?.getHex(), m.emissive?.getHex(), m.emissiveIntensity, m.metalness, m.roughness,
+      m.map?.uuid, m.emissiveMap?.uuid, m.bumpMap?.uuid, m.bumpScale, m.envMapIntensity, m.side, m.toneMapped, m.userData.noCastShadow, heightClass, Math.floor((p.x + 22) / cellSize), Math.floor((p.z + 22) / cellSize)].join('|');
+    if (bakeColor) {
+      const state = { ...basic.toJSON(), uuid: undefined, name: undefined, color: undefined };
+      // Include every render state even when toJSON omits its default value.
+      const renderState = [basic.opacity, basic.alphaTest, basic.alphaHash, basic.alphaToCoverage, basic.premultipliedAlpha,
+        basic.blending, basic.blendSrc, basic.blendDst, basic.blendEquation, basic.blendSrcAlpha, basic.blendDstAlpha, basic.blendEquationAlpha,
+        basic.blendColor.toArray(), basic.blendAlpha, basic.depthFunc, basic.depthTest, basic.depthWrite, basic.colorWrite, basic.fog,
+        basic.toneMapped, basic.side, basic.shadowSide, basic.polygonOffset, basic.polygonOffsetFactor, basic.polygonOffsetUnits,
+        basic.forceSinglePass, basic.dithering, basic.precision, basic.visible, basic.clipIntersection, basic.clipShadows,
+        basic.stencilWrite, basic.stencilFunc, basic.stencilRef, basic.stencilWriteMask, basic.stencilFuncMask, basic.stencilFail,
+        basic.stencilZFail, basic.stencilZPass, basic.userData.noCastShadow];
+      const colorKey = JSON.stringify([state, renderState]);
+      let shared = colorMaterials.get(colorKey);
+      if (!shared) {
+        shared = basic.clone(); shared.color.setRGB(1, 1, 1); shared.vertexColors = true;
+        colorMaterials.set(colorKey, shared);
+      }
+      material = shared;
+      materialKey = ['Vertex-colored city accent', colorKey, heightClass, Math.floor((p.x + 22) / cellSize), Math.floor((p.z + 22) / cellSize)].join('|');
+    }
+    const signature = materialKey;
     let bucket = buckets.get(signature);
-    if (!bucket) { bucket = { material: m, geometries: [], meshes: [] }; buckets.set(signature, bucket); }
+    if (!bucket) { bucket = { material, geometries: [], meshes: [] }; buckets.set(signature, bucket); }
     const g = object.geometry.index ? object.geometry.toNonIndexed() : object.geometry.clone();
-    g.applyMatrix4(object.matrixWorld);
+    // Keep vertices local to their assembly so wheels and rotors still move correctly.
+    g.applyMatrix4(rootInverse.clone().multiply(object.matrixWorld));
     if (!g.getAttribute('normal')) g.computeVertexNormals();
     if (!g.getAttribute('uv')) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count * 2), 2));
-    for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
+    if (bakeColor) {
+      const colors = new Float32Array(g.getAttribute('position').count * 3);
+      for (let i = 0; i < colors.length; i += 3) {
+        colors[i] = basic.color.r; colors[i + 1] = basic.color.g; colors[i + 2] = basic.color.b;
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    }
+    for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name) && !(bakeColor && name === 'color')) g.deleteAttribute(name);
     bucket.geometries.push(g); bucket.meshes.push(object);
   });
   const oldGeometries = new Set<THREE.BufferGeometry>();
   const oldMaterials = new Set<THREE.Material>();
   const retainedMaterials = new Set<THREE.Material>();
-  for (const bucket of buckets.values()) {
+  for (const [signature, bucket] of buckets) {
     retainedMaterials.add(bucket.material);
     const geometry = mergeGeometries(bucket.geometries);
     if (geometry) {
       const merged = new THREE.Mesh(geometry, bucket.material);
-      merged.name = 'Batched city architecture'; scene.add(merged);
+      merged.name = 'Batched city architecture';
+      merged.userData.dynamic = includeDynamic;
+      merged.userData.noCastShadow = !!bucket.material.userData.noCastShadow;
+      geometry.computeBoundingSphere();
+      if (scene instanceof THREE.Scene) {
+        geometry.computeBoundingBox();
+        merged.userData.cityBounds = geometry.boundingBox;
+        merged.userData.detailRange = geometry.boundingBox!.max.y <= 12 ? 150 : geometry.boundingBox!.max.y <= 30 ? 220 : 450;
+        merged.userData.cityMaterialKey = signature.split('|').slice(0, -3).join('|');
+      }
+      merged.updateMatrix(); merged.matrixAutoUpdate = false;
+      scene.add(merged);
       for (const mesh of bucket.meshes) {
         oldGeometries.add(mesh.geometry); oldMaterials.add(mesh.material as THREE.Material); mesh.removeFromParent();
       }
     }
     bucket.geometries.forEach(g => g.dispose());
   }
+  // Remove empty transform trees left behind by merging thousands of static details.
+  const emptyGroups: THREE.Group[] = [];
+  scene.traverse(o => { if (o !== scene && o instanceof THREE.Group && !o.userData.dynamic) emptyGroups.push(o); });
+  for (const group of emptyGroups.reverse()) if (group.children.length === 0) group.removeFromParent();
   oldGeometries.forEach(g => g.dispose());
+  // A source material can also remain on an excluded instance or dynamic mesh.
+  scene.traverse(object => {
+    if (object instanceof THREE.Mesh) {
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) retainedMaterials.add(material);
+    }
+  });
   oldMaterials.forEach(m => { if (!retainedMaterials.has(m)) m.dispose(); });
+  if (scene instanceof THREE.Scene) combineCityBatches(scene);
+}
+
+type CityBatchEntry = { id: number; bounds: THREE.Box3; range: number; skyline: boolean };
+
+function staticBatchMaterial(material: THREE.Material) {
+  // Architecture vertices/normals are already baked into world space. Avoid five vertex
+  // texture fetches per triangle corner for identity instance transforms.
+  const compile = material.onBeforeCompile;
+  const cacheKey = material.customProgramCacheKey();
+  material.onBeforeCompile = function(shader, renderer) {
+    compile.call(this, shader, renderer);
+    shader.vertexShader = shader.vertexShader.replace('#include <batching_vertex>', '#ifdef USE_BATCHING\nmat4 batchingMatrix = mat4(1.0);\n#endif');
+  };
+  material.customProgramCacheKey = () => cacheKey + '|static-city-batch';
+  material.needsUpdate = true;
+}
+
+/** Keep block-level culling while submitting compatible blocks through GPU multi-draw. */
+function combineCityBatches(scene: THREE.Scene) {
+  const groups = new Map<string, THREE.Mesh[]>();
+  for (const object of scene.children) {
+    if (!(object instanceof THREE.Mesh) || !object.userData.cityMaterialKey) continue;
+    const key = object.userData.cityMaterialKey as string;
+    const meshes = groups.get(key);
+    if (meshes) meshes.push(object); else groups.set(key, [object]);
+  }
+  for (const meshes of groups.values()) {
+    if (meshes.length < 2) continue;
+    const vertices = meshes.reduce((sum, m) => sum + m.geometry.getAttribute('position').count, 0);
+    const material = meshes[0].material as THREE.MeshBasicMaterial;
+    staticBatchMaterial(material);
+    const batch = new THREE.BatchedMesh(meshes.length, vertices, 0, material);
+    batch.name = 'City / GPU batched architecture';
+    batch.sortObjects = false;
+    batch.userData.noCastShadow = meshes[0].userData.noCastShadow;
+    batch.customDepthMaterial = new THREE.MeshDepthMaterial();
+    staticBatchMaterial(batch.customDepthMaterial);
+    const entries: CityBatchEntry[] = [];
+    for (const mesh of meshes) {
+      const id = batch.addInstance(batch.addGeometry(mesh.geometry));
+      batch.setMatrixAt(id, mesh.matrix);
+      const bounds = mesh.userData.cityBounds as THREE.Box3;
+      entries.push({ id, bounds: bounds.clone(), range: mesh.userData.detailRange, skyline: material instanceof THREE.MeshBasicMaterial && !!material.map && bounds.max.y > 60 });
+      mesh.removeFromParent(); mesh.geometry.dispose();
+      if (mesh.material !== material) (mesh.material as THREE.Material).dispose();
+    }
+    batch.userData.cityBatchEntries = entries;
+    batch.computeBoundingBox(); batch.computeBoundingSphere();
+    batch.updateMatrix(); batch.matrixAutoUpdate = false;
+    batch.updateMatrixWorld(true); batch.matrixWorldAutoUpdate = false;
+    scene.add(batch);
+  }
+}
+
+/** Fog hides distant street furniture; skyline silhouettes remain visible. */
+export function cityVisibility(scene: THREE.Scene) {
+  const batches = scene.children.filter(o => o.userData.cityBounds) as THREE.Mesh[];
+  const gpuBatches = scene.children.filter(o => o.userData.cityBatchEntries) as THREE.BatchedMesh[];
+  const instances = scene.children.filter(o => o instanceof THREE.InstancedMesh && o.userData.cityInstanceCells) as THREE.InstancedMesh[];
+  const previous = new THREE.Vector3(Infinity, Infinity, Infinity);
+  let instanceCellX = Infinity; let instanceCellZ = Infinity;
+  return (position: THREE.Vector3) => {
+    const cx = Math.floor(position.x / 44); const cz = Math.floor(position.z / 44);
+    if (cx !== instanceCellX || cz !== instanceCellZ) {
+      instanceCellX = cx; instanceCellZ = cz;
+      const focusX = cx * 44 + 22; const focusZ = cz * 44 + 22;
+      for (const mesh of instances) {
+        const target = mesh.instanceMatrix.array as Float32Array;
+        let offset = 0;
+        for (const cell of mesh.userData.cityInstanceCells as DistrictInstanceCell[]) {
+          const dx = Math.max(Math.abs(cell.x - focusX) - 13, 0); const dz = Math.max(Math.abs(cell.z - focusZ) - 13, 0);
+          const distance = dx * dx + dz * dz;
+          if (distance < 144 * 144) { target.set(cell.street, offset); offset += cell.street.length; }
+          if (distance < 430 * 430) { target.set(cell.roof, offset); offset += cell.roof.length; }
+        }
+        mesh.count = offset / 16; mesh.visible = mesh.count > 0;
+        mesh.instanceMatrix.clearUpdateRanges(); mesh.instanceMatrix.addUpdateRange(0, offset);
+        mesh.instanceMatrix.needsUpdate = true;
+      }
+    }
+    if (previous.distanceToSquared(position) < 4) return;
+    previous.copy(position);
+    for (const batch of gpuBatches) {
+      for (const entry of batch.userData.cityBatchEntries as CityBatchEntry[]) {
+        const { bounds, range } = entry;
+        const x = Math.max(bounds.min.x - position.x, 0, position.x - bounds.max.x);
+        const z = Math.max(bounds.min.z - position.z, 0, position.z - bounds.max.z);
+        batch.setVisibleAt(entry.id, entry.skyline || x * x + z * z < range * range);
+      }
+    }
+    for (const mesh of batches) {
+      const bounds = mesh.userData.cityBounds as THREE.Box3;
+      const x = Math.max(bounds.min.x - position.x, 0, position.x - bounds.max.x);
+      const z = Math.max(bounds.min.z - position.z, 0, position.z - bounds.max.z);
+      // The far skyline uses unlit facade panels and supplies the distant horizon.
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      const skyline = material instanceof THREE.MeshBasicMaterial && material.map && bounds.max.y > 60;
+      const range = mesh.userData.detailRange as number;
+      mesh.visible = !!skyline || x * x + z * z < range * range;
+    }
+  };
 }
 
 /** Cheap city-shaped studio environment gives the paint/glass readable reflected neon. */
@@ -104,115 +244,97 @@ export function cityEnvironment(renderer: THREE.WebGLRenderer) {
   return target;
 }
 
-export function addCityDetail(scene: THREE.Scene, facadeTextures: THREE.CanvasTexture[]) {
-  const screenMaterials = Array.from({ length: 4 }, (_, i) => new THREE.MeshBasicMaterial({ map: advertisement(i), color: new THREE.Color(1.4, 1.4, 1.4), toneMapped: false, side: THREE.DoubleSide }));
-  const screens: THREE.Mesh[] = [];
+export function addCityDetail(scene: THREE.Scene) {
+  const district = addCyberpunkDistrict(scene);
   const trimMaterials = [cyan, pink];
-  for (let ix = 0; ix < 8; ix++) for (let iz = 0; iz < 8; iz++) {
-    const x = -154 + ix * 44; const z = -154 + iz * 44; const seed = ix * 8 + iz;
+  for (let ix = 0; ix < 17; ix++) for (let iz = 0; iz < 17; iz++) {
+    const x = -352 + ix * 44; const z = -352 + iz * 44; const seed = ix * 17 + iz;
     const group = new THREE.Group(); group.position.set(x, 0, z); scene.add(group);
     const trim = trimMaterials[(ix + iz) % 2];
-    // Slab joints, accessible corners, utility channels and illuminated shop fronts.
+    // Slab joints and accessible corners surround the opaque district storefronts.
     for (const side of [-1, 1]) {
       box(group, side * 12.85, .3, 0, .18, .2, 25.7, concrete);
       box(group, 0, .3, side * 12.85, 25.7, .2, .18, concrete);
       box(group, 0, .405, side * 12.6, 22, .018, .05, trim);
       for (let i = -2; i <= 2; i++) {
         box(group, i * 4.7, .25, side * 11.85, .025, .015, 1.3, metal);
-        box(group, i * 4.2, 1.55, side * 10.7, 3.5, 1.9, .14, metal);
-        box(group, i * 4.2, 2.63, side * 10.8, 3.5, .08, .2, trim);
-        box(group, i * 4.2, 1.4, side * 10.82, 2.8, .04, .02, trim);
       }
       for (const k of [-1, 1]) {
         box(group, side * 11.9, .75, k * 11.9, .24, 1.05, .24, metal);
         box(group, side * 11.9, 1.12, k * 11.9, .27, .08, .27, trim);
       }
     }
-    // Recessed building services: vents, air handlers, service pipes and canopies.
-    box(group, 11.1, 1.15, 4, .85, 1.8, 2.4, metal);
-    for (let j = 0; j < 7; j++) box(group, 11.55, .6 + j * .17, 4, .02, .07, 2, concrete);
+    // Upper service pipes remain above the new shop canopies. Hidden old interiors are omitted.
     for (let j = 0; j < 2; j++) {
       cable(group, [new THREE.Vector3(10.8, .4, -4 + j * .5), new THREE.Vector3(10.8, 4.5, -4 + j * .5), new THREE.Vector3(8, 5, -4 + j * .5)], .09);
     }
-    box(group, 0, 3.15, -11.2, 8, .13, 2, metal);
     if (seed % 4 === 0) {
-      const screen = new THREE.Mesh(new THREE.PlaneGeometry(6.5, 9.75), screenMaterials[seed % 3]);
-      screen.position.set(0, 10, -11.25); screen.rotation.y = Math.PI; screen.userData.dynamic = true;
-      group.add(screen); screens.push(screen);
+      const screen = district.screen(seed % 3, 6.5, 9.75);
+      screen.position.set(0, 10, -11.25); screen.rotation.y = Math.PI;
+      group.add(screen);
       box(group, 0, 10, -11.04, 6.85, 10.1, .3, metal);
     }
     // Blade advertisements face the main avenues and create a strong near/mid hierarchy.
-    if (Math.abs(x) === 22 && (iz % 2 === 0 || iz === 3)) {
-      const screen = new THREE.Mesh(new THREE.PlaneGeometry(6, 18), screenMaterials[(iz + ix) % 4]);
+    if ((Math.abs(x) === 0 || Math.abs(x) === 176 || Math.abs(x) === 264) && (iz % 2 === 0 || iz === 3)) {
+      const screen = district.screen((iz + ix) % 4, 6, 18);
       screen.position.set(x < 0 ? 11.3 : -11.3, iz === 3 ? 14 : 20 + seed % 9, -2);
-      screen.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2; screen.userData.dynamic = true;
-      group.add(screen); screens.push(screen);
+      screen.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2;
+      group.add(screen);
     }
     if (iz % 3 === 0) {
       cable(scene, [new THREE.Vector3(x - 12, 11, z - 13), new THREE.Vector3(x, 9, z - 22), new THREE.Vector3(x + 12, 12, z - 31)], .04);
     }
   }
-  // Far skyline is a second city layer, with much larger silhouettes behind the driveable grid.
-  for (let i = 0; i < 56; i++) {
-    const angle = i / 56 * Math.PI * 2;
-    const radius = 284 + (i % 5) * 17;
-    const height = 62 + ((i * 37) % 128);
-    const material = new THREE.MeshBasicMaterial({ color: 0x526880, map: facadeTextures[i % 5] });
-    const tower = new THREE.Mesh(new THREE.CylinderGeometry(8 + i % 7, 14 + i % 9, height, i % 3 === 0 ? 12 : 4), material);
-    tower.position.set(Math.sin(angle) * radius, height / 2, Math.cos(angle) * radius); scene.add(tower);
-    box(scene, tower.position.x, height + 3, tower.position.z, .3, 8, .3, i % 3 ? cyan : pink);
-  }
   // A multi-span elevated arterial behind the foreground blocks, with structural trusses.
-  for (let i = -4; i < 4; i++) {
-    const x = i * 44 + 22;
-    box(scene, x, 23.4, -132, 44, .7, 6.4, concrete);
+  for (let i = -8; i < 9; i++) {
+    const x = i * 44;
+    box(scene, x, 23.4, -286, 44, .7, 6.4, concrete);
     for (const side of [-1, 1]) {
-      box(scene, x, 24.1, -132 + side * 3.1, 44, .08, .08, cyan);
-      box(scene, x, 22.7, -132 + side * 2.8, 44, .25, .25, metal);
-      box(scene, x, 11.5, -132 + side * 11, 1.2, 23, 1.2, concrete);
+      box(scene, x, 24.1, -286 + side * 3.1, 44, .08, .08, cyan);
+      box(scene, x, 22.7, -286 + side * 2.8, 44, .25, .25, metal);
+      box(scene, x, 11.5, -286 + side * 11, 1.2, 23, 1.2, concrete);
       for (let j = 0; j < 8; j++) {
-        const brace = box(scene, x - 19 + j * 5.4, 22.8, -132 + side * 3, .12, 2.5, .12, metal);
+        const brace = box(scene, x - 19 + j * 5.4, 22.8, -286 + side * 3, .12, 2.5, .12, metal);
         brace.rotation.z = j % 2 ? -.85 : .85;
       }
     }
   }
   // Tunnel services, ceiling ribs, tile seams, fans and chevron panels.
-  for (let z = 55; z < 78; z += 3.2) for (const side of [-1, 1]) {
-    box(scene, side * 8.86, 3.6, z, .06, 6.8, .04, concrete);
-    box(scene, side * 8.81, .9, z, .07, .3, 1.4, z % 2 > 1 ? cyan : pink);
-    box(scene, side * 7.2, 8.9, z, .2, .23, 3.2, metal);
-    box(scene, side * 8.8, 5.9, z, .08, .055, 3.2, cyan);
+  for (let z = 77; z < 100; z += 3.2) for (const side of [-1, 1]) {
+    box(scene, -22 + side * 8.86, 3.6, z, .06, 6.8, .04, concrete);
+    box(scene, -22 + side * 8.81, .9, z, .07, .3, 1.4, z % 2 > 1 ? cyan : pink);
+    box(scene, -22 + side * 7.2, 8.9, z, .2, .23, 3.2, metal);
+    box(scene, -22 + side * 8.8, 5.9, z, .08, .055, 3.2, cyan);
   }
-  for (const z of [57, 66, 75]) {
+  for (const z of [79, 88, 97]) {
     const fan = new THREE.Mesh(new THREE.CylinderGeometry(.65, .65, 1.4, 12), metal);
-    fan.rotation.x = Math.PI / 2; fan.position.set(0, 8.3, z); scene.add(fan);
-    for (let i = 0; i < 3; i++) box(scene, (i - 1) * .3, 8.3, z - .71, .04, 1.05, .04, concrete);
+    fan.rotation.x = Math.PI / 2; fan.position.set(-22, 8.3, z); scene.add(fan);
+    for (let i = 0; i < 3; i++) box(scene, -22 + (i - 1) * .3, 8.3, z - .71, .04, 1.05, .04, concrete);
   }
   // Diagonal crosswalks/stop bars remain subtle, broken lane lines stop at junctions.
-  const markings = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x82919d }), 9 * 9 * 16);
+  const markings = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x82919d }), 18 * 18 * 16);
   let count = 0; const matrix = new THREE.Matrix4();
-  for (let x = -176; x <= 176; x += 44) for (let z = -176; z <= 176; z += 44) {
+  for (let x = -374; x <= 374; x += 44) for (let z = -374; z <= 374; z += 44) {
     for (const side of [-1, 1]) for (let j = 0; j < 4; j++) {
       matrix.makeScale(.65, .012, 2); matrix.setPosition(x + (j - 1.5) * 1.5, .047, z + side * 8); markings.setMatrixAt(count++, matrix);
       matrix.makeScale(2, .012, .65); matrix.setPosition(x + side * 8, .047, z + (j - 1.5) * 1.5); markings.setMatrixAt(count++, matrix);
     }
   }
+  markings.count = count;
+  markings.instanceMatrix.needsUpdate = true;
   scene.add(markings);
   // Visible infrastructure marks the existing world boundary.
-  for (let road = -176; road <= 176; road += 44) for (const side of [-1, 1]) {
-    box(scene, road, .65, side * 196, 17, .9, .45, concrete);
-    box(scene, road, 1.12, side * 196, 17, .06, .5, pink);
-    box(scene, side * 196, .65, road, .45, .9, 17, concrete);
-    box(scene, side * 196, 1.12, road, .5, .06, 17, pink);
+  for (let road = -374; road <= 374; road += 44) for (const side of [-1, 1]) {
+    box(scene, road, .65, side * 396, 17, .9, .45, concrete);
+    box(scene, road, 1.12, side * 396, 17, .06, .5, pink);
+    box(scene, side * 396, .65, road, .45, .9, 17, concrete);
+    box(scene, side * 396, 1.12, road, .5, .06, 17, pink);
   }
-  return { update(time: number) {
-    // Animate shared screen materials; no per-frame canvas redraw/upload.
-    screenMaterials.forEach((m, i) => m.color.setScalar(1.25 + Math.sin(time * .85 + i * 1.7) * .18));
-  } };
+  // Street signs stay at a steady brightness, including when the car is parked.
 }
 
 export function wetStreetReflection(scene: THREE.Scene) {
-  const mirror = new Reflector(new THREE.PlaneGeometry(398, 398), { textureWidth: 768, textureHeight: 432, clipBias: .002, multisample: 0 });
+  const mirror = new Reflector(new THREE.PlaneGeometry(800, 800), { textureWidth: 768, textureHeight: 432, clipBias: .002, multisample: 0 });
   mirror.rotation.x = -Math.PI / 2; mirror.position.y = .026;
   const material = mirror.material as THREE.ShaderMaterial;
   material.transparent = true; material.depthWrite = false;
@@ -226,24 +348,73 @@ export function wetStreetReflection(scene: THREE.Scene) {
     float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
     void main(){
       vec2 uv = vUv.xy / vUv.w;
-      float ripple = sin(vWorld.z*18.+time*2.3)*sin(vWorld.x*14.-time*1.6);
+      float ripple = sin(vWorld.z*18.)*sin(vWorld.x*14.);
       float grain = hash(floor(vWorld.xz*85.));
-      uv += vec2(ripple*.00015, ripple*.00025);
+      float rippleFade = 1.-smoothstep(35.,90.,distance(cameraPosition,vWorld));
+      uv += vec2(ripple*.00015, ripple*.00025)*rippleFade;
       vec3 reflected = texture2D(tDiffuse,uv).rgb*.42;
       reflected += texture2D(tDiffuse,uv+vec2(.001,.002)).rgb*.29;
       reflected += texture2D(tDiffuse,uv-vec2(.001,.002)).rgb*.29;
       float grazing = 1.-clamp(normalize(cameraPosition-vWorld).y,0.,1.);
       float wetness = .5+.5*smoothstep(.2,.8,sin(vWorld.x*.73+sin(vWorld.z*.36)));
       // Asphalt stays visible: stronger wet patches beside the kerbs, weaker in the lanes.
-      vec2 block = abs(mod(vWorld.xz+22.,44.)-22.);
+      vec2 block = abs(mod(vWorld.xz,44.)-22.);
       float edge = smoothstep(5.8,8.6,min(block.x,block.y));
       float luminance = dot(reflected,vec3(.2126,.7152,.0722));
       reflected *= min(1., .65 / max(luminance,.001));
       float strength = (.012+pow(grazing,2.)*.11)*mix(.42,1.,edge)*wetness;
       gl_FragColor=vec4(reflected*vec3(.8,.85,.9),strength*(.85+grain*.15));
     }`;
+  // Captures are staggered from shadow refreshes and stop entirely when the camera is parked.
+  const capture = mirror.onBeforeRender.bind(mirror);
+  let captureFrame = 0;
+  let quality = 0;
+  let hasCapture = false;
+  let collected = false;
+  const excluded: THREE.Object3D[] = [];
+  const visibility: boolean[] = [];
+  const previousPosition = new THREE.Vector3();
+  const previousRotation = new THREE.Quaternion();
+  const cameraPosition = new THREE.Vector3();
+  const cameraRotation = new THREE.Quaternion();
+  mirror.onBeforeRender = function(renderer, scene, camera, geometry, material, group) {
+    const frame = captureFrame++;
+    if (quality === 3) return;
+    const cadence = quality === 2 ? 9 : quality === 1 ? 6 : 4;
+    if (hasCapture && frame % cadence !== 2) return;
+    camera.getWorldPosition(cameraPosition); camera.getWorldQuaternion(cameraRotation);
+    if (hasCapture && cameraPosition.distanceToSquared(previousPosition) < .0225 && 1 - Math.abs(cameraRotation.dot(previousRotation)) < .00004) return;
+    if (!collected) {
+      // The first render happens after weather and the car are installed. Keep references thereafter.
+      scene.traverse(object => {
+        if (object instanceof THREE.Points || object instanceof THREE.Sprite || object.name.startsWith('Snow /') || object.userData.cockpitDetail || object.userData.excludeFromReflection) excluded.push(object);
+      });
+      collected = true;
+    }
+    for (let i = 0; i < excluded.length; i++) { visibility[i] = excluded[i].visible; excluded[i].visible = false; }
+    const shadowAutoUpdate = renderer.shadowMap.autoUpdate;
+    const shadowNeedsUpdate = renderer.shadowMap.needsUpdate;
+    renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = false;
+    try {
+      capture(renderer, scene, camera, geometry, material, group);
+      previousPosition.copy(cameraPosition); previousRotation.copy(cameraRotation); hasCapture = true;
+    } finally {
+      for (let i = 0; i < excluded.length; i++) excluded[i].visible = visibility[i];
+      renderer.shadowMap.autoUpdate = shadowAutoUpdate; renderer.shadowMap.needsUpdate = shadowNeedsUpdate;
+    }
+  };
   scene.add(mirror);
-  return { mirror, update(time: number) { material.uniforms.time.value = time; }, dispose() { mirror.getRenderTarget().dispose(); } };
+  return {
+    mirror,
+    update(time: number) { material.uniforms.time.value = time; },
+    setQuality(level: number) {
+      const next = Math.max(0, Math.min(3, Math.floor(level)));
+      if (next === quality) return;
+      quality = next; mirror.visible = quality < 3; hasCapture = false;
+      mirror.getRenderTarget().setSize(quality >= 2 ? 512 : 768, quality >= 2 ? 288 : 432);
+    },
+    dispose() { mirror.getRenderTarget().dispose(); },
+  };
 }
 
 /** Select four local practical lights; the shader never pays for the whole city's lamps. */
@@ -256,10 +427,22 @@ export function poolStreetLights(scene: THREE.Scene) {
   } });
   remove.forEach(l => l.removeFromParent());
   const pool = Array.from({ length: 4 }, () => { const light = new THREE.PointLight(); scene.add(light); return light; });
+  const previous = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const nearest: (typeof sources[number] | undefined)[] = Array.from({ length: 4 }, () => undefined);
+  const distances = new Float64Array(4);
   return (position: THREE.Vector3) => {
-    sources.sort((a, b) => a.position.distanceToSquared(position) - b.position.distanceToSquared(position));
-    pool.forEach((light, i) => { const s = sources[i]; if (!s) return;
-      light.position.copy(s.position); light.color.copy(s.color); light.intensity = s.intensity; light.distance = s.distance; light.decay = s.decay;
+    if (previous.distanceToSquared(position) < 4) return;
+    previous.copy(position); nearest.fill(undefined); distances.fill(Infinity);
+    for (const source of sources) {
+      const distance = source.position.distanceToSquared(position);
+      for (let i = 0; i < 4; i++) {
+        if (distance >= distances[i]) continue;
+        for (let j = 3; j > i; j--) { distances[j] = distances[j - 1]; nearest[j] = nearest[j - 1]; }
+        distances[i] = distance; nearest[i] = source; break;
+      }
+    }
+    pool.forEach((light, i) => { const source = nearest[i]; if (!source) { light.intensity = 0; return; }
+      light.position.copy(source.position); light.color.copy(source.color); light.intensity = source.intensity; light.distance = source.distance; light.decay = source.decay;
     });
   };
 }

@@ -28,7 +28,7 @@ assert.equal((await state()).active, true, 'PLAY enables driving');
 await page.waitForFunction(() => document.querySelector('canvas').__audio()?.state === 'running', null, { timeout: 5000 });
 const soundState = () => page.evaluate(() => document.querySelector('canvas').__audio());
 results.idleAudio = await soundState();
-assert.ok(results.idleAudio.levels.rain > 0 && results.idleAudio.levels.city > 0 && results.idleAudio.levels.engine > 0, 'Rain, city ambience and idle engine audio start on PLAY');
+assert.ok(results.idleAudio.levels.snow > 0 && results.idleAudio.levels.city > 0 && results.idleAudio.levels.engine > 0, 'Winter ambience, city ambience and idle engine audio start on PLAY');
 await page.screenshot({ path: 'artifacts/city.png' });
 await page.keyboard.down('w'); await page.waitForTimeout(1200); await page.keyboard.up('w');
 results.accelerating = await state();
