@@ -1,9 +1,13 @@
 import * as THREE from 'three';
 import { batchArchitecture } from './cinematic-city';
+import { addDriverDoor } from './car-door';
 import { addDriverCockpit } from './driver-cockpit';
 import { addBugattiWheelFace, createBugattiWheelGeometries } from './cyber-car-body';
 import { addBlenderCarBody } from './blender-car';
 import { addBugattiRearAero } from './bugatti-rear-aero';
+import { createNitroEffects, NITRO_OUTLETS } from './nitro-effects';
+import { createFrontMiniguns } from './front-miniguns';
+import { addPerformanceTire, createPerformanceTireAssets } from './performance-tires';
 
 /** Small repeating 2x2 twill; all fiber detail is generated once at startup. */
 function makeCarbonTexture(): THREE.CanvasTexture {
@@ -93,34 +97,6 @@ function makeRotorTexture(): THREE.CanvasTexture {
   return texture;
 }
 
-/** Procedural performance tire tread pattern */
-function makeTireTreadTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 64; canvas.height = 64;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#101216';
-  ctx.fillRect(0, 0, 64, 64);
-
-  // UV U follows the circumference; UV V runs from one sidewall to the other.
-  // Keep the smooth sidewalls free of tread and cut longitudinal rain channels.
-  ctx.fillStyle = '#060709';
-  ctx.fillRect(0, 24, 64, 3);
-  ctx.fillRect(0, 37, 64, 3);
-
-  // Performance siping slots
-  ctx.fillStyle = '#080a0d';
-  for (let x = 0; x < 64; x += 16) {
-    ctx.fillRect(x, 17, 2, 7);
-    ctx.fillRect(x + 8, 28, 2, 8);
-    ctx.fillRect(x, 40, 2, 7);
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(24, 1);
-  return tex;
-}
-
 /** Small wheel crest, shared by all four center caps. */
 function makeWheelBadgeTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
@@ -145,31 +121,22 @@ export function makeCar() {
   // ── Textures ──
   const carbonTexture = makeCarbonTexture();
   const rotorMap = makeRotorTexture();
-  const treadMap = makeTireTreadTexture();
+  const tireAssets = createPerformanceTireAssets();
 
-  // The reference's red front/doors contrast with a black carbon rear shell.
+  // Pearl-white lacquer keeps the entire silhouette readable in the night city.
   const paint = new THREE.MeshPhysicalMaterial({
-    color: 0xc5091b,
-    metalness: 0.38,
-    roughness: 0.20,
+    color: 0xf4f5f2,
+    metalness: 0.08,
+    roughness: 0.23,
     clearcoat: 1.0,
-    clearcoatRoughness: 0.08,
+    clearcoatRoughness: 0.14,
     ior: 1.54,
-    envMapIntensity: 1.85,
+    envMapIntensity: 1.35,
   });
-  paint.name = 'Bugatti / racing red gloss clearcoat';
-  const rearCarbonTexture = carbonTexture.clone();
-  rearCarbonTexture.repeat.set(100, 100);
-  rearCarbonTexture.anisotropy = 4;
+  paint.name = 'Bugatti / pearl white gloss clearcoat';
+  paint.userData.vehiclePaint = true;
   const secondaryPaint = paint.clone();
-  secondaryPaint.color.setHex(0x7b8088);
-  secondaryPaint.map = rearCarbonTexture;
-  secondaryPaint.bumpMap = rearCarbonTexture;
-  secondaryPaint.bumpScale = .00045;
-  secondaryPaint.metalness = .22;
-  secondaryPaint.roughness = .30;
-  secondaryPaint.clearcoatRoughness = .12;
-  secondaryPaint.name = 'Bugatti / exposed black carbon rear shell';
+  secondaryPaint.name = 'Bugatti / pearl white rear shell';
 
   // Authentic 2x2 twill weave carbon fiber with micro bump definition
   const carbon = new THREE.MeshPhysicalMaterial({
@@ -196,9 +163,13 @@ export function makeCar() {
   });
   alloy.name = 'Car / machined gunmetal alloy';
   const wheelAlloy = new THREE.MeshStandardMaterial({
-    color: 0x252a31, metalness: .94, roughness: .18, envMapIntensity: 1.35,
+    color: 0x87919a, metalness: .88, roughness: .28, envMapIntensity: 1.25,
   });
-  wheelAlloy.name = 'Bugatti / gloss gunmetal forged wheels';
+  wheelAlloy.name = 'Bugatti / satin titanium forged wheels';
+  const polishedRim = new THREE.MeshStandardMaterial({
+    color: 0xc5cbd0, metalness: .96, roughness: .19, envMapIntensity: 1.4,
+  });
+  polishedRim.name = 'Bugatti / polished machined wheel lips';
   const wheelBadge = new THREE.MeshStandardMaterial({
     color: 0xffffff, map: makeWheelBadgeTexture(), metalness: .25, roughness: .27,
   });
@@ -207,15 +178,16 @@ export function makeCar() {
   const glass = new THREE.MeshPhysicalMaterial({
     color: 0x151c22,
     metalness: 0.03,
-    roughness: 0.075,
+    roughness: 0.22,
+    specularIntensity: 0.5,
     transmission: 0,
     opacity: 0.88,
     depthWrite: false,
     transparent: true,
     ior: 1.52,
-    clearcoat: 1.0,
-    clearcoatRoughness: 0.05,
-    envMapIntensity: 1.1,
+    clearcoat: 0.35,
+    clearcoatRoughness: 0.26,
+    envMapIntensity: 0.65,
   });
   glass.name = 'Car / smoked laminated canopy';
 
@@ -245,7 +217,7 @@ export function makeCar() {
     emissiveIntensity: 0.0,
   });
 
-  // Red monobloc calipers carry the reference paint accent into the black wheels.
+  // Red monobloc calipers are visible through the open forged-wheel spokes.
   const caliperMat = new THREE.MeshStandardMaterial({
     color: 0xc5091b,
     metalness: 0.38,
@@ -272,19 +244,6 @@ export function makeCar() {
   const steering: THREE.Group[] = [];
   const brakeDiscs: THREE.Mesh[] = [];
 
-  const rubber = new THREE.MeshStandardMaterial({
-    color: 0x141619,
-    roughness: 0.92,
-    metalness: 0.0,
-    bumpMap: treadMap,
-    bumpScale: 0.003,
-  });
-  // A flattened performance-tire crown with rounded shoulders and smooth sidewalls.
-  const tireGeo = new THREE.LatheGeometry([
-    [.296, -.108], [.318, -.122], [.348, -.120], [.366, -.100],
-    [.374, -.075], [.377, -.038], [.378, 0], [.377, .038],
-    [.374, .075], [.366, .100], [.348, .120], [.318, .122], [.296, .108],
-  ].map(([radius, width]) => new THREE.Vector2(radius, width)), 40);
   const rotorGeo = new THREE.CylinderGeometry(.244, .244, .018, 40);
   const pistonGeo = new THREE.CylinderGeometry(.016, .016, .01, 12);
   const wheelGeometries = createBugattiWheelGeometries();
@@ -308,14 +267,11 @@ export function makeCar() {
     pivot.add(wheel);
     wheels.push(wheel);
 
-    // Treaded performance tire
-    const tire = new THREE.Mesh(tireGeo, rubber);
-    tire.rotation.z = Math.PI / 2;
-    wheel.add(tire);
+    addPerformanceTire(wheel, side, tireAssets);
 
     const face = side * .108;
 
-    addBugattiWheelFace(wheel, side, face, { alloy: wheelAlloy, carbon, hub: wheelBadge }, wheelGeometries);
+    addBugattiWheelFace(wheel, side, face, { alloy: wheelAlloy, lip: polishedRim, carbon, hub: wheelBadge }, wheelGeometries);
 
     // Carbon-ceramic cross-drilled rotor (marked dynamic for thermal braking glow)
     const disc = new THREE.Mesh(rotorGeo, brakeDiscMat);
@@ -356,95 +312,9 @@ export function makeCar() {
   // ═══════════════════════════════════════════════════════
   // 7. AUTHENTIC 6-BARREL ROTARY MINIGUNS
   // ═══════════════════════════════════════════════════════
-  const gunBarrels: THREE.Group[] = [];
-  const gunMounts: THREE.Group[] = [];
-  const muzzleFlashes: THREE.Mesh[] = [];
-  const gunMetal = new THREE.MeshStandardMaterial({ color: 0x1f2730, metalness: .95, roughness: .18 });
-  const gunCollar = new THREE.MeshStandardMaterial({ color: 0x14181f, metalness: .92, roughness: .25 });
-  const brassAmmo = new THREE.MeshStandardMaterial({ color: 0xd4a038, metalness: .9, roughness: .25 });
-
-  for (const x of [-.45, .45]) {
-    // Fixed mounting cradle attached to bumper
-    const gunMount = new THREE.Group();
-    gunMount.position.set(x, .38, -2.23);
-    gunMount.visible = false;
-    gunMount.userData.dynamic = true;
-    body.add(gunMount);
-    gunMounts.push(gunMount);
-
-    // Receiver housing
-    const receiver = new THREE.Mesh(new THREE.BoxGeometry(.13, .13, .22), gunMetal);
-    receiver.position.set(0, 0, .08);
-    gunMount.add(receiver);
-
-    // Ammo feed bracket with linked brass cartridge belt entering receiver
-    const ammoChute = box(gunMount, [.04, .08, .12], [x > 0 ? -.08 : .08, 0, .06], brassAmmo);
-    ammoChute.rotation.z = x > 0 ? -.25 : .25;
-
-    // Outer perforated slotted heat shield shroud
-    const shroud = new THREE.Mesh(new THREE.CylinderGeometry(.064, .068, .22, 12, 1, true), gunCollar);
-    shroud.rotation.x = Math.PI / 2;
-    shroud.position.set(0, 0, -.08);
-    gunMount.add(shroud);
-
-    // ROTATING 6-BARREL CLUSTER (Spins dynamically on fire)
-    const rotor = new THREE.Group();
-    rotor.userData.dynamic = true;
-    gunMount.add(rotor);
-    gunBarrels.push(rotor);
-
-    // Central drive spindle / rotor shaft
-    const spindle = new THREE.Mesh(new THREE.CylinderGeometry(.016, .016, .47, 10), gunMetal);
-    spindle.rotation.x = Math.PI / 2;
-    spindle.position.set(0, 0, -.12);
-    spindle.userData.dynamic = true;
-    rotor.add(spindle);
-
-    // 6 precision gun barrels arranged in a hexagonal rotor
-    const barrelRadius = .038;
-    for (let b = 0; b < 6; b++) {
-      const angle = (b / 6) * Math.PI * 2;
-      const bx = Math.cos(angle) * barrelRadius;
-      const by = Math.sin(angle) * barrelRadius;
-
-      // Individual barrel tube
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(.009, .009, .47, 8), gunMetal);
-      barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(bx, by, -.12);
-      barrel.userData.dynamic = true;
-      rotor.add(barrel);
-
-      // Flash suppressor / compensator tip
-      const tip = new THREE.Mesh(new THREE.CylinderGeometry(.011, .009, .04, 8), gunCollar);
-      tip.rotation.x = Math.PI / 2;
-      tip.position.set(bx, by, -.365);
-      tip.userData.dynamic = true;
-      rotor.add(tip);
-    }
-
-    // 3 barrel clamping guide collars
-    for (const zCollar of [-.08, -.24, -.35]) {
-      const collar = new THREE.Mesh(new THREE.TorusGeometry(barrelRadius, .009, 6, 18), gunCollar);
-      collar.position.set(0, 0, zCollar);
-      collar.userData.dynamic = true;
-      rotor.add(collar);
-    }
-
-    // Muzzle flash cone at barrel tip
-    const flash = new THREE.Mesh(
-      new THREE.ConeGeometry(.105, .32, 8, 1, true),
-      new THREE.MeshBasicMaterial({
-        color: 0xff6622, transparent: true, opacity: .9,
-        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-      }),
-    );
-    flash.rotation.x = -Math.PI / 2;
-    flash.position.set(0, 0, -.49);
-    flash.visible = false;
-    flash.userData.dynamic = true;
-    gunMount.add(flash);
-    muzzleFlashes.push(flash);
-  }
+  const miniguns = createFrontMiniguns(body);
+  const gunBarrels = miniguns.barrels;
+  const muzzleFlashes = miniguns.flashes;
 
   // ═══════════════════════════════════════════════════════
   // 8. TAILLIGHTS, REVERSE LIGHTS & TITANIUM EXHAUSTS
@@ -461,30 +331,31 @@ export function makeCar() {
     box(body, [.09, .014, .012], [.19, .540, 2.395], reverseMat),
   ];
 
-  // Thermal and boost effects sit inside the model's native exhaust outlets.
+  // Keep the native center cans; add compact outlets at both bumper ends.
   const exhausts: THREE.Mesh[] = [];
   const flames: THREE.Mesh[] = [];
   const exhaustCoreGeo = new THREE.CylinderGeometry(.033, .033, .08, 16);
-  const exhaustCoreMat = new THREE.MeshStandardMaterial({ color: 0x080b0e, metalness: .55, roughness: .65, emissive: 0x123b46, emissiveIntensity: .3 });
-  const flameGeo = new THREE.ConeGeometry(.038, .86, 10, 1, true);
-  const flameMat = new THREE.MeshBasicMaterial({ color: 0x7beeff, transparent: true, opacity: .7, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const exhaustCoreMat = new THREE.MeshStandardMaterial({ color: 0x080b0e, metalness: .55, roughness: .65, emissive: 0x0c6321, emissiveIntensity: .3 });
+  const sideNozzleGeo = new THREE.CylinderGeometry(.078, .065, .16, 16, 1, true);
+  const sideCoreGeo = new THREE.CylinderGeometry(.057, .057, .08, 16);
 
-  for (const x of [-.225, -.075, .075, .225]) {
+  for (const outlet of NITRO_OUTLETS) {
+    const sideOutlet = Math.abs(outlet.x) > .5;
+    if (sideOutlet) {
+      const nozzle = new THREE.Mesh(sideNozzleGeo, alloy);
+      nozzle.name = 'Nitro / titanium bumper-end outlet';
+      nozzle.rotation.x = Math.PI / 2;
+      nozzle.position.set(outlet.x, outlet.y, outlet.z - .08);
+      body.add(nozzle);
+    }
     // Internal catalyst core mesh glowing with heat
-    const core = new THREE.Mesh(exhaustCoreGeo, exhaustCoreMat);
+    const core = new THREE.Mesh(sideOutlet ? sideCoreGeo : exhaustCoreGeo, exhaustCoreMat);
     core.rotation.x = Math.PI / 2;
-    core.position.set(x, .222, 2.315);
+    core.position.set(outlet.x, outlet.y, outlet.z - (sideOutlet ? .045 : .09));
     body.add(core);
     exhausts.push(core);
-
-    // Boost flame cone
-    const flame = new THREE.Mesh(flameGeo, flameMat);
-    flame.rotation.x = Math.PI / 2;
-    flame.position.set(x, .222, 2.84);
-    flame.visible = false;
-    body.add(flame);
-    flames.push(flame);
   }
+  const nitroEffects = createNitroEffects(body);
 
   // ═══════════════════════════════════════════════════════
   // 9. UNDERGLOW & SHADOW
@@ -505,7 +376,20 @@ export function makeCar() {
     new THREE.MeshBasicMaterial({ color: 0x000006, alphaMap: glowMap, transparent: true, opacity: .9, depthWrite: false }));
   shadow.rotation.x = -Math.PI / 2; shadow.position.y = .037; car.add(shadow);
 
-  const boostLight = new THREE.PointLight(0x36dfff, 0, 8, 2); boostLight.position.set(0, .65, 2.8); car.add(boostLight);
+  // Nitrous glow uses the effects' existing draw, avoiding another per-pixel city light.
+  const boostLights: THREE.PointLight[] = [];
+
+  // These emitters animate a shared material while their geometry stays fixed
+  // within the body. Consolidate each set and keep its live material controls.
+  for (const emitters of [reverseLights, exhausts]) {
+    const assembly = new THREE.Group();
+    assembly.name = 'Bugatti / shared animated emitters';
+    assembly.userData.dynamic = true;
+    body.add(assembly);
+    for (const mesh of emitters) assembly.attach(mesh);
+    batchArchitecture(assembly, true);
+    emitters.splice(0, emitters.length, ...assembly.children.filter((part): part is THREE.Mesh => part instanceof THREE.Mesh));
+  }
 
   // Mark all dynamic and animated parts so batching never merges them
   for (const part of [...headlights, ...brakeLights, ...reverseLights, ...exhausts, ...brakeDiscs, ...gunBarrels, ...muzzleFlashes]) {
@@ -513,13 +397,7 @@ export function makeCar() {
     part.traverse(c => { c.userData.dynamic = true; });
   }
 
-  // Each rotor moves as one assembly; its rigid parts share two material draws.
-  for (const rotor of gunBarrels) batchArchitecture(rotor, true);
-  // Mounts retain their own batches so the complete weapon can retract when idle.
-  for (const mount of gunMounts) {
-    batchArchitecture(mount);
-    mount.traverse(part => { part.userData.dynamic = true; });
-  }
+  const driverDoor = addDriverDoor(body);
 
   // Batch static architecture
   batchArchitecture(body);
@@ -550,8 +428,8 @@ export function makeCar() {
   car.position.y = .015;
 
   return {
-    car, body, cockpit, wheels, steering, flames, brakeLights, exhausts,
-    headlights, underglow, boostLights: [boostLight], gunBarrels,
+    car, body, cockpit, driverDoor, wheels, steering, flames, brakeLights, exhausts,
+    headlights, underglow, boostLights, nitroEffects, miniguns, gunBarrels,
     muzzleFlashes, brakeDiscs, reverseLights, headlightBeams
   };
 }

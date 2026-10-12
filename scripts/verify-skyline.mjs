@@ -41,14 +41,14 @@ for (const group of scene.children) {
   });
 }
 const buckets = {
-  low: plans.filter(p => p.height < 34).length,
-  medium: plans.filter(p => p.height >= 34 && p.height < 90).length,
-  tall: plans.filter(p => p.height >= 90 && p.height < 200).length,
-  skyscrapers: plans.filter(p => p.height >= 200).length,
+  low: plans.filter(p => p.height < 59.5).length,
+  medium: plans.filter(p => p.height >= 59.5 && p.height < 157.5).length,
+  tall: plans.filter(p => p.height >= 157.5 && p.height < 350).length,
+  skyscrapers: plans.filter(p => p.height >= 350).length,
 };
 assert.ok(buckets.low >= 60 && buckets.medium >= 80 && buckets.tall >= 40 && buckets.skyscrapers >= 10, 'Low rises, mid rises, towers and skyscrapers all contribute to the skyline');
 assert.equal(new Set(plans.map(p => p.shape)).size, SKYLINE_SHAPES.length, 'All twelve silhouettes appear');
-assert.ok(Math.max(...plans.map(p => p.height)) >= 300, 'There are exceptionally tall landmarks');
+assert.ok(Math.min(...plans.map(p => p.height)) >= 31.5 && Math.max(...plans.map(p => p.height)) >= 550, 'Every block is taller, including the landmarks');
 assert.ok(Math.max(...plans.map(p => p.width)) - Math.min(...plans.map(p => p.width)) > 10, 'Building widths vary substantially');
 assert.ok(triangles < 65000, 'The entire new skyline remains within its static geometry budget');
 assert.equal(signs.size, 5, 'Advertisements reuse five materials');

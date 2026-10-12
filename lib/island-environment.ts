@@ -213,19 +213,24 @@ function buildSkyline(parent: THREE.Group) {
         float across = abs(vNormal.z) > .5 ? vWorld.x : vWorld.z;
         vec2 floorUv = vec2(across / 3.6 + vSeed * 13., vWorld.y / 3.5);
         vec2 cell = fract(floorUv), floorId = floor(floorUv);
-        float window = smoothstep(.08,.14,cell.x) * (1.-smoothstep(.80,.86,cell.x))
-          * smoothstep(.12,.18,cell.y) * (1.-smoothstep(.73,.79,cell.y));
-        window *= 1.-step(.5,abs(vNormal.y));
-        float occupancy = step(.49, hash(floorId + vSeed));
-        occupancy *= step(.16, hash(vec2(floorId.y, floor(vSeed))));
-        float warm = step(.38,hash(floorId*.17 + vSeed));
-        vec3 lightColor = mix(vec3(.35,.55,.72),vec3(1.,.72,.40),warm);
-        float lightLevel = .12 + hash(floorId + vSeed * 6.) * .30;
-        vec3 glass = mix(vec3(.019,.033,.046), vec3(.045,.058,.063),fract(vSeed*.31));
-        glass *= .65 + .35 * max(0.,dot(normalize(vNormal),normalize(vec3(.4,.7,.4))));
         vec2 pixelFootprint = fwidth(floorUv);
         float resolved = 1.-smoothstep(.35,1.8,max(pixelFootprint.x,pixelFootprint.y));
-        float officeLight = mix(.055,window * occupancy * lightLevel,resolved);
+        // Fully unresolved windows already use the same average light. Keep its hue,
+        // and evaluate individual rooms only while they still affect the image.
+        float officeLight = .055;
+        if (resolved > 0.) {
+          float window = smoothstep(.08,.14,cell.x) * (1.-smoothstep(.80,.86,cell.x))
+            * smoothstep(.12,.18,cell.y) * (1.-smoothstep(.73,.79,cell.y));
+          window *= 1.-step(.5,abs(vNormal.y));
+          float occupancy = step(.49, hash(floorId + vSeed));
+          occupancy *= step(.16, hash(vec2(floorId.y, floor(vSeed))));
+          float lightLevel = .12 + hash(floorId + vSeed * 6.) * .30;
+          officeLight = mix(.055,window * occupancy * lightLevel,resolved);
+        }
+        float warm = step(.38,hash(floorId*.17 + vSeed));
+        vec3 lightColor = mix(vec3(.35,.55,.72),vec3(1.,.72,.40),warm);
+        vec3 glass = mix(vec3(.019,.033,.046), vec3(.045,.058,.063),fract(vSeed*.31));
+        glass *= .65 + .35 * max(0.,dot(normalize(vNormal),normalize(vec3(.4,.7,.4))));
         vec3 color = glass + lightColor * officeLight;
         float distanceFade = 1.-exp(-length(cameraPosition-vWorld)*.00020);
         color = mix(color,vec3(.025,.044,.063),distanceFade * .76);
@@ -446,9 +451,12 @@ function addWater(parent: THREE.Group, reflection: THREE.Texture, aurora: Return
         float b=p.x*-.025+p.y*.079+time*.57;
         vec2 slope=vec2(.01032*cos(a)-.00375*cos(b),.00504*cos(a)+.01185*cos(b));
         float rippleFade=1.-smoothstep(180.,1500.,length(cameraPosition-vWorld));
-        slope+=(vec2(noise(p*.32+vec2(time*.14,time*.09)),
-          noise(p*.29+vec2(27.2+time*.11,-time*.13)))-.5)*.06*rippleFade;
-        slope+=vec2(sin(p.x*1.8-p.y*.6+time*2.),cos(p.x*.9+p.y*1.7-time*1.5))*.004*rippleFade;
+        // Beyond the existing fade, these fine ripples contribute exactly zero.
+        if (rippleFade > 0.) {
+          slope+=(vec2(noise(p*.32+vec2(time*.14,time*.09)),
+            noise(p*.29+vec2(27.2+time*.11,-time*.13)))-.5)*.06*rippleFade;
+          slope+=vec2(sin(p.x*1.8-p.y*.6+time*2.),cos(p.x*.9+p.y*1.7-time*1.5))*.004*rippleFade;
+        }
         vec3 normal=normalize(vec3(-slope.x,1.,-slope.y));
         vec3 view=normalize(cameraPosition-vWorld), ray=reflect(-view,normal);
         float fresnel=.035+.965*pow(1.-max(dot(view,normal),0.),5.);

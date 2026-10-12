@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { ROAD_STEP } from './city-layout';
+import { animatedScreenMaterial, screenClock } from './city-screens';
 
 type AtlasTile = { x: number; y: number; width: number; height: number };
 export type DistrictInstanceCell = { x: number; z: number; street: Float32Array; roof: Float32Array };
@@ -7,6 +8,8 @@ export type DistrictInstanceCell = { x: number; z: number; street: Float32Array;
 const SHOP_NAMES = ['NOODLE 24', 'MINDLINK', 'KAIRO MED', 'BYTE MARKET', 'VANTA HOTEL', 'GHOST ARCADE', 'NIGHT RAIL', 'AFTERHOURS'];
 const SHOP_COPY = ['HOT FOOD / OPEN ALL NIGHT', 'LICENSED CYBERWARE CLINIC', 'TRAUMA CARE / WALK IN', 'PARTS / REPAIRS / EXCHANGE', 'ROOMS / 24H RECEPTION', 'PLAY BEYOND THE REAL', 'DISTRICT TRANSIT / GATE 08', 'RECORDS / AUDIO / SYNTH'];
 const INKS = ['#ffa15b', '#59e7ed', '#f36aa2', '#ecba5a', '#7baeff', '#e970dc', '#6dddd6', '#fb737f'];
+const BLADE_NAMES = ['NOODLE', 'LINK', 'MED', 'PARTS', 'HOTEL', 'ARCADE', 'RAIL', 'VINYL'];
+const BLADE_GLYPHS = ['麺', '接続', '医療', '修理', '空室', '遊戯', '夜行', '音'];
 
 function randomFor(seed: number) {
   let value = seed >>> 0;
@@ -16,10 +19,12 @@ function randomFor(seed: number) {
 /** One opaque atlas serves every shop and commercial screen, including their baked interiors. */
 function makeDistrictAtlas() {
   const canvas = document.createElement('canvas');
-  canvas.width = 2048; canvas.height = 1024;
+  canvas.width = 2048; canvas.height = 1536;
   const c = canvas.getContext('2d')!;
   const shops: AtlasTile[] = [];
   const adverts: AtlasTile[] = [];
+  const blades: AtlasTile[] = [];
+  const posters: AtlasTile[] = [];
   c.fillStyle = '#11171a'; c.fillRect(0, 0, canvas.width, canvas.height);
 
   for (let index = 0; index < SHOP_NAMES.length; index++) {
@@ -33,7 +38,9 @@ function makeDistrictAtlas() {
     c.fillStyle = '#10191d'; c.fillRect(8, 8, 496, 75);
     c.fillStyle = ink; c.fillRect(13, 11, 6, 68);
     c.font = '900 45px Arial, sans-serif'; c.textBaseline = 'middle';
+    c.shadowColor = ink; c.shadowBlur = 15;
     c.fillText(SHOP_NAMES[index], 31, 39, 453);
+    c.shadowBlur = 0;
     c.font = 'bold 14px monospace'; c.fillStyle = '#c6d2cd'; c.fillText(SHOP_COPY[index], 32, 68);
     for (let bay = 0; bay < 4; bay++) {
       const x = 15 + bay * 124;
@@ -43,7 +50,7 @@ function makeDistrictAtlas() {
       interior.addColorStop(1, '#10171b');
       c.fillStyle = '#080c0e'; c.fillRect(x - 3, 89, 120, 158);
       c.fillStyle = interior; c.fillRect(x, 94, 113, 150);
-      // Shelves, light fixtures and a counter are baked instead of modeled behind every pane.
+      // Shelves, ceiling lights and counters are baked instead of modeled behind each pane.
       c.fillStyle = '#cdb589'; c.globalAlpha = .8; c.fillRect(x + 9, 105, 88, 3); c.globalAlpha = 1;
       c.fillStyle = '#1a2225'; c.fillRect(x + 6, 178, 104, 9);
       for (let item = 0; item < 6; item++) {
@@ -55,6 +62,25 @@ function makeDistrictAtlas() {
       c.strokeStyle = 'rgba(137,190,194,.24)'; c.lineWidth = 1;
       c.beginPath(); c.moveTo(x + 7, 111); c.lineTo(x + 96, 228); c.stroke();
       c.fillStyle = '#080d11'; c.fillRect(x, 223, 113, 21);
+      if ((index + bay) % 5 === 0) {
+        // Closed repair units break the repetition of permanently open glass shops.
+        c.fillStyle = '#303e42'; c.fillRect(x + 1, 94, 110, 149);
+        for (let slat = 99; slat < 239; slat += 7) {
+          c.fillStyle = slat % 3 ? '#1a272d' : '#536163'; c.fillRect(x + 1, slat, 110, 2);
+        }
+        c.strokeStyle = ink; c.lineWidth = 3; c.globalAlpha = .38;
+        c.beginPath(); c.moveTo(x + 14, 211); c.lineTo(x + 54, 133); c.lineTo(x + 73, 205); c.lineTo(x + 103, 157); c.stroke(); c.globalAlpha = 1;
+        c.fillStyle = '#bbb39a'; c.fillRect(x + 73, 189, 21, 32);
+        c.fillStyle = '#273037'; c.font = 'bold 7px monospace'; c.fillText('REPAIR', x + 75, 199);
+      } else if (bay === 2) {
+        // A recessed entrance, doorframe and threshold read as a real shop from the road.
+        c.fillStyle = '#0b1217'; c.fillRect(x + 33, 113, 59, 126);
+        c.fillStyle = index % 3 ? '#31515a' : '#775a3f'; c.fillRect(x + 39, 121, 46, 104);
+        c.fillStyle = '#6d8584'; c.fillRect(x + 38, 121, 2, 116);
+        c.fillStyle = '#c2c9b2'; c.fillRect(x + 78, 171, 2, 19);
+        c.fillStyle = '#ad8b65'; c.fillRect(x + 37, 235, 51, 3);
+        c.fillStyle = ink; c.font = 'bold 8px monospace'; c.fillText('OPEN 24H', x + 39, 147);
+      }
     }
     // Stickers and grime break the otherwise perfect procedural storefront grid.
     c.fillStyle = '#bcbca6'; c.fillRect(463, 109, 25, 36);
@@ -64,6 +90,49 @@ function makeDistrictAtlas() {
       c.fillRect(random() * 512, 84 + random() * 172, 1 + random() * 12, 1 + random() * 3);
     }
     c.fillStyle = ink; c.fillRect(16, 251, 477, 2);
+    // Rain streaks and faded maintenance notices remain stable when the car moves.
+    for (let streak = 0; streak < 24; streak++) {
+      c.fillStyle = 'rgba(4,10,14,.12)'; c.fillRect(random() * 512, 79, 1 + random() * 3, 25 + random() * 155);
+    }
+    c.fillStyle = '#b9b18a'; c.fillRect(7, 199, 8, 27); c.fillStyle = '#803f3d'; c.fillRect(9, 204, 4, 9);
+    c.restore();
+  }
+
+  for (let index = 0; index < 8; index++) {
+    const tile = { x: index * 256, y: 1024, width: 256, height: 384 };
+    blades.push(tile);
+    const ink = INKS[index]; const random = randomFor(index + 781);
+    c.save(); c.translate(tile.x, tile.y);
+    c.fillStyle = '#0b141e'; c.fillRect(0, 0, 256, 384);
+    c.fillStyle = '#23333d'; c.fillRect(7, 7, 242, 370);
+    c.fillStyle = '#101a25'; c.fillRect(15, 15, 226, 354);
+    c.shadowColor = ink; c.shadowBlur = 17; c.strokeStyle = ink; c.lineWidth = 4;
+    c.strokeRect(22, 22, 212, 338);
+    c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = ink;
+    c.font = '900 70px "Yu Gothic", "Microsoft YaHei", Arial, sans-serif';
+    const glyphs = [...BLADE_GLYPHS[index]];
+    glyphs.forEach((glyph, row) => c.fillText(glyph, 128, 103 + row * 85, 180));
+    c.font = '900 34px Arial, sans-serif'; c.fillText(BLADE_NAMES[index], 128, 280, 193);
+    c.shadowBlur = 0; c.fillStyle = '#d8e7dd'; c.font = 'bold 15px monospace'; c.fillText(index === 4 ? 'PODS / 24H' : 'SECTOR 08', 128, 321);
+    c.fillStyle = ink; c.fillRect(89, 343, 78, 3);
+    for (let scuff = 0; scuff < 45; scuff++) {
+      c.fillStyle = scuff % 2 ? 'rgba(4,11,17,.25)' : 'rgba(160,176,163,.08)';
+      c.fillRect(random() * 256, random() * 384, 2 + random() * 21, 1 + random() * 2);
+    }
+    c.restore();
+
+    const poster = { x: index * 256, y: 1408, width: 256, height: 128 };
+    posters.push(poster); c.save(); c.translate(poster.x, poster.y);
+    c.fillStyle = ['#25424a', '#523446', '#615b44', '#303345'][index % 4]; c.fillRect(0, 0, 256, 128);
+    c.fillStyle = ink; c.beginPath(); c.arc(48, 54, 30, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#111c26'; c.beginPath(); c.arc(48, 54, 19, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#ddd6bf'; c.font = '900 23px Arial'; c.fillText(['CHROME', 'NIGHT SHIFT', 'UPGRADE', 'LOST SIGNAL', 'DEEP SLEEP', 'AFTER DARK', 'TRANSIT 08', 'SYNTH FM'][index], 87, 42, 157);
+    c.font = 'bold 10px monospace'; c.fillText('24 OCT / DISTRICT UNDERGROUND', 86, 66, 157);
+    c.fillStyle = ink; c.fillRect(87, 80, 140, 3);
+    c.fillStyle = '#d2ccaf'; c.font = '8px monospace'; c.fillText('TUNE IN // EVERY NIGHT', 14, 112);
+    for (let rip = 0; rip < 24; rip++) {
+      c.fillStyle = 'rgba(14,22,25,.22)'; c.fillRect(random() * 256, random() * 128, random() * 23, 2);
+    }
     c.restore();
   }
 
@@ -117,7 +186,9 @@ function makeDistrictAtlas() {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 4;
   const material = new THREE.MeshBasicMaterial({ map: texture, color: new THREE.Color(1.25, 1.25, 1.25), toneMapped: false });
-  return { material, shops, adverts, width: canvas.width, height: canvas.height };
+  // Reuse the shop's illuminated header as an upper commercial marquee, without another texture.
+  const marquees = shops.map(tile => ({ ...tile, height: 83 }));
+  return { material, shops, adverts, blades, posters, marquees, width: canvas.width, height: canvas.height };
 }
 
 function makeIndustrialMaterial(vented: boolean) {
@@ -147,9 +218,12 @@ function makeIndustrialMaterial(vented: boolean) {
   return new THREE.MeshStandardMaterial({ color: vented ? 0x8a9997 : 0x848079, map: texture, metalness: vented ? .48 : .08, roughness: vented ? .73 : .93 });
 }
 
-/** All props are fixed to block islands; there are no street-level supports or animated screens. */
+/** Hardware stays fixed to block islands; commercial displays animate in shared shaders. */
 export function addCyberpunkDistrict(scene: THREE.Scene) {
   const atlas = makeDistrictAtlas();
+  const clock = screenClock(scene);
+  const advertMaterial = animatedScreenMaterial(atlas.material.map!, clock, 'district');
+  const marqueeMaterial = animatedScreenMaterial(atlas.material.map!, clock, 'marquee');
   const concrete = makeIndustrialMaterial(false);
   const vents = makeIndustrialMaterial(true);
   const steel = new THREE.MeshStandardMaterial({ color: 0x28383c, metalness: .68, roughness: .64 });
@@ -164,8 +238,18 @@ export function addCyberpunkDistrict(scene: THREE.Scene) {
   const box = (parent: THREE.Object3D, x: number, y: number, z: number, w: number, h: number, d: number, material: THREE.Material = steel) => {
     const mesh = new THREE.Mesh(unitBox, material); mesh.position.set(x, y, z); mesh.scale.set(w, h, d); parent.add(mesh); return mesh;
   };
-  const pipe = (parent: THREE.Object3D, x: number, y: number, z: number, radius: number, height: number) => {
-    const mesh = new THREE.Mesh(unitPipe, rust); mesh.position.set(x, y, z); mesh.scale.set(radius, height, radius); parent.add(mesh); return mesh;
+  const pipe = (parent: THREE.Object3D, x: number, y: number, z: number, radius: number, height: number, material: THREE.Material = rust) => {
+    const mesh = new THREE.Mesh(unitPipe, material); mesh.position.set(x, y, z); mesh.scale.set(radius, height, radius); parent.add(mesh); return mesh;
+  };
+  const pipeAxis = new THREE.Vector3(0, 1, 0);
+  const cable = (parent: THREE.Object3D, points: THREE.Vector3[], radius = .027) => {
+    // Short cylinders share the same instance draw as every riser; no per-cable tube mesh.
+    for (let i = 1; i < points.length; i++) {
+      const start = points[i - 1]; const end = points[i];
+      const direction = end.clone().sub(start); const center = start.clone().add(end).multiplyScalar(.5);
+      const segment = pipe(parent, center.x, center.y, center.z, radius, direction.length(), steel);
+      segment.quaternion.setFromUnitVectors(pipeAxis, direction.normalize());
+    }
   };
   const makeScreen = (tile: AtlasTile, w: number, h: number) => {
     const geometry = new THREE.PlaneGeometry(w, h);
@@ -174,7 +258,11 @@ export function addCyberpunkDistrict(scene: THREE.Scene) {
     for (let i = 0; i < uv.count; i++) uv.setXY(i,
       (tile.x + 2 + uv.getX(i) * (tile.width - 4)) / atlas.width,
       1 - (tile.y + tile.height - 2 - uv.getY(i) * (tile.height - 4)) / atlas.height);
-    return new THREE.Mesh(geometry, atlas.material);
+    // Paper posters, blade lettering and occupied shop interiors retain the base atlas.
+    const material = atlas.adverts.includes(tile) ? advertMaterial : atlas.marquees.includes(tile) ? marqueeMaterial : atlas.material;
+    const mesh = new THREE.Mesh(geometry, material);
+    if (material !== atlas.material) mesh.name = material === advertMaterial ? 'Cyberpunk / live commercial screen' : 'Cyberpunk / live shop marquee';
+    return mesh;
   };
   const panel = (parent: THREE.Object3D, tile: AtlasTile, x: number, y: number, z: number, w: number, h: number) => {
     const mesh = makeScreen(tile, w, h); mesh.position.set(x, y, z); parent.add(mesh); return mesh;
@@ -195,43 +283,99 @@ export function addCyberpunkDistrict(scene: THREE.Scene) {
     for (let side = 0; side < 4; side++) {
       const face = new THREE.Group(); face.rotation.y = side * Math.PI / 2; block.add(face);
       const color = neon[(seed + side) % neon.length];
-      // The maximum canopy edge is 12.48 m from a block center. Road lanes start at 13 m.
-      box(face, 0, 1.98, 11.52, 22.55, 3.48, .16, concrete);
-      box(face, 0, 3.84, 12.04, 22.55, .16, .88, steel);
-      box(face, 0, 3.76, 12.41, 21.9, .036, .04, color);
-      for (const division of [-11.1, -3.67, 3.67, 11.1]) box(face, division, 1.93, 11.69, .13, 3.32, .19, steel);
-      for (let shop = 0; shop < 3; shop++) panel(face, atlas.shops[(seed + side * 3 + shop) % atlas.shops.length], (shop - 1) * 7.35, 1.97, 11.714, 7.14, 3.17);
+      // All pavement props stay inside 12.8 m from the block center; lanes start at 13 m.
+      // The largest tower podium reaches 12.1 m. Detail planes must sit beyond it.
+      box(face, 0, 1.98, 12.16, 22.55, 3.48, .16, concrete);
+      for (const division of [-11.1, -3.67, 3.67, 11.1]) box(face, division, 1.93, 12.285, .13, 3.32, .19, steel);
+      for (let shop = 0; shop < 3; shop++) {
+        const shopIndex = (seed + side * 3 + shop) % atlas.shops.length;
+        const shopX = (shop - 1) * 7.35;
+        panel(face, atlas.shops[shopIndex], shopX, 1.97, 12.255, 7.14, 3.17);
+        const awningHeight = 3.85 + ((seed + shop + side) % 3) * .12;
+        const awning = box(face, shopX, awningHeight, 12.32, 7.17, .12, .69, (shopIndex % 3 === 0 ? rust : steel));
+        awning.rotation.x = .12;
+        box(face, shopX, awningHeight - .14, 12.65, 7.07, .14, .06, steel);
+        box(face, shopX, awningHeight - .16, 12.69, 6.8, .042, .018, neon[shopIndex % neon.length]);
+      }
+
+      // Large legible signs above the small shop band give the avenues a second visual scale.
+      const marqueeIndex = (seed * 3 + side * 5) % atlas.marquees.length;
+      const marqueeX = (seed + side) % 2 ? -4.05 : 4.05;
+      const marqueeY = 6.5 + ((seed + side) % 3) * 1.35;
+      box(face, marqueeX, marqueeY, 12.29, 9.3, 1.64, .18, steel);
+      panel(face, atlas.marquees[marqueeIndex], marqueeX, marqueeY, 12.395, 9.02, 1.46);
+      box(face, marqueeX, marqueeY - .84, 12.395, 9.3, .055, .07, neon[marqueeIndex % neon.length]);
+      for (const supportX of [-3.75, 3.75]) box(face, marqueeX + supportX, marqueeY - 1.2, 12.22, .11, .8, .18, rust);
+
+      if ((seed + side) % 3 === 0) {
+        // Projecting enamel/neon signs face along the street and create depth while driving.
+        const signIndex = (seed + side * 5) % atlas.blades.length;
+        // Exposed corners let the entire wider blade face clear the underlying tower wall.
+        const signX = (seed + side) % 2 ? -12.36 : 12.36;
+        const signY = 7.1 + (seed % 4) * .45;
+        box(face, signX, signY, 11.86, .15, 4.9, 1.76, steel);
+        box(face, signX - Math.sign(signX) * .47, signY + 2.13, 11.77, 1.1, .09, .13, rust);
+        for (const direction of [-1, 1]) {
+          const sign = panel(face, atlas.blades[signIndex], signX + direction * .084, signY, 11.86, 1.66, 4.74);
+          sign.rotation.y = direction * Math.PI / 2;
+        }
+        box(face, signX, signY - 2.37, 11.86, .18, .075, 1.7, color);
+      }
+      if ((seed + side) % 5 === 0) {
+        // The sidewalk vending machine is one solid body with a baked advertisement/display.
+        const machineX = (seed % 2 ? -1 : 1) * 10.48;
+        box(face, machineX, 1.31, 12.36, .78, 1.92, .46, steel);
+        panel(face, atlas.adverts[(seed + side + 4) % atlas.adverts.length], machineX - .055, 1.39, 12.602, .59, 1.48);
+        box(face, machineX, .62, 12.608, .5, .11, .025, rust);
+        box(face, machineX + .29, 1.34, 12.613, .052, .18, .02, color);
+      }
+      if ((seed + side) % 4 === 0) {
+        // Posters, a battered street cabinet and a drain give occupied shops a service layer.
+        panel(face, atlas.posters[(seed + side) % atlas.posters.length], -3.62, 2.45, 12.399, .93, .52).rotation.z = .07;
+        panel(face, atlas.posters[(seed + side + 3) % atlas.posters.length], -3.62, 1.83, 12.405, .74, .43).rotation.z = -.04;
+        box(face, 3.57, .87, 12.36, .49, 1.06, .49, vents);
+        box(face, 3.57, 1.44, 12.38, .56, .065, .56, steel);
+        box(face, -5.3, .42, 12.47, 1.1, .035, .43, vents);
+      }
+      if ((seed + side) % 3 === 1) {
+        // Bundled utility wires sag across facades instead of obstructing the avenues.
+        for (let strand = 0; strand < 2; strand++) {
+          const y = 6.05 + strand * .15;
+          cable(face, [new THREE.Vector3(-10.4, y, 12.32), new THREE.Vector3(-5.2, y - .52, 12.42), new THREE.Vector3(.2, y - .73, 12.45), new THREE.Vector3(5.5, y - .46, 12.41), new THREE.Vector3(10.5, y + .16, 12.32)], .041);
+        }
+        box(face, 2.24, 5.18, 12.38, 1.44, .82, .41, vents);
+        cable(face, [new THREE.Vector3(2.65, 5.63, 12.47), new THREE.Vector3(2.81, 6.07, 12.47), new THREE.Vector3(3.8, 6.03, 12.47)], .045);
+      }
 
       if (side === seed % 4 && seed % 3 === 0) {
         // AC cassettes, bolted service cabinets, parallel risers and a small security camera.
-        box(face, -7.7, 5.17, 11.69, 2.15, 1.07, .49, vents);
-        box(face, -4.9, 4.85, 11.64, .72, 1.4, .23, steel);
-        box(face, -4.89, 5.28, 11.77, .38, .1, .015, color);
+        box(face, -7.7, 5.17, 12.31, 2.15, 1.07, .49, vents);
+        box(face, -4.9, 4.85, 12.3, .72, 1.4, .23, steel);
+        box(face, -4.89, 5.28, 12.429, .38, .1, .015, color);
         for (const dx of [-3.7, -3.4]) {
-          pipe(face, dx, 5.06, 11.7, .055, 2.1);
-          box(face, dx, 4.25, 11.7, .19, .08, .19, steel);
-          box(face, dx, 5.91, 11.7, .19, .08, .19, steel);
+          pipe(face, dx, 5.06, 12.39, .055, 2.1);
+          box(face, dx, 4.25, 12.39, .19, .08, .19, steel);
+          box(face, dx, 5.91, 12.39, .19, .08, .19, steel);
         }
-        box(face, 7.8, 4.73, 11.85, .44, .21, .32, concrete).rotation.x = .24;
-        box(face, 7.8, 4.68, 12.03, .12, .1, .035, steel);
-        box(face, 7.8, 4.72, 11.64, .08, .12, .28, steel);
-        const leads = [new THREE.Vector3(-7.8, 4.57, 11.82), new THREE.Vector3(-6.5, 4.33, 11.82), new THREE.Vector3(-4.8, 4.36, 11.82)];
-        const conduit = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(leads), 8, .036, 4, false), steel);
-        face.add(conduit);
+        box(face, 7.8, 4.73, 12.42, .44, .21, .32, concrete).rotation.x = .24;
+        box(face, 7.8, 4.68, 12.6, .12, .1, .035, steel);
+        box(face, 7.8, 4.72, 12.24, .08, .12, .28, steel);
+        const leads = [new THREE.Vector3(-7.8, 4.57, 12.46), new THREE.Vector3(-6.5, 4.33, 12.46), new THREE.Vector3(-4.8, 4.36, 12.46)];
+        cable(face, leads, .036);
       }
       if (side === (seed + 1) % 4 && seed % 3 === 0) {
         const tile = atlas.adverts[(seed + side) % atlas.adverts.length];
-        box(face, 9.4, 7.75, 11.86, 1.92, 7.67, .27, steel);
-        panel(face, tile, 9.4, 7.75, 12.01, 1.72, 7.35);
-        box(face, 8.42, 7.75, 11.91, .045, 7.45, .08, color);
+        box(face, 9.4, 7.75, 12.31, 1.92, 7.67, .27, steel);
+        panel(face, tile, 9.4, 7.75, 12.463, 1.72, 7.35);
+        box(face, 8.42, 7.75, 12.44, .045, 7.45, .08, color);
       }
       if (side === seed % 4 && seed % 11 === 0) {
         // Large screens are mounted above the street; their supports stay on the building face.
-        box(face, .2, 18.7, 11.49, 5.98, 11.92, .32, steel);
-        panel(face, atlas.adverts[(seed + 3) % atlas.adverts.length], .2, 18.7, 11.67, 5.68, 11.62);
-        box(face, -2.84, 18.7, 11.68, .05, 11.92, .05, color);
-        box(face, 3.24, 18.7, 11.68, .05, 11.92, .05, color);
-        box(face, .2, 12.45, 11.36, 1.8, .25, .6, rust);
+        box(face, .2, 18.7, 12.25, 5.98, 11.92, .32, steel);
+        panel(face, atlas.adverts[(seed + 3) % atlas.adverts.length], .2, 18.7, 12.433, 5.68, 11.62);
+        box(face, -2.84, 18.7, 12.44, .05, 11.92, .05, color);
+        box(face, 3.24, 18.7, 12.44, .05, 11.92, .05, color);
+        box(face, .2, 12.45, 12.2, 1.8, .25, .6, rust);
       }
     }
     const roof = rooftops.get(`${x}|${z}`);
@@ -251,7 +395,7 @@ export function addCyberpunkDistrict(scene: THREE.Scene) {
     }
   }
 
-  // Repeated solid details use eight shared instance draws, rather than adding dozens of batches.
+  // Repeated solid details use nine shared instance draws, including every sagging cable.
   const buckets = new Map<string, {
     material: THREE.Material; geometry: THREE.BufferGeometry; meshes: THREE.Mesh[];
     cells: Map<string, { x: number; z: number; street: number[]; roof: number[] }>;

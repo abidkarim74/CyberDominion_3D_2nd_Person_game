@@ -8,20 +8,26 @@ import { addSnowTracks } from './snow-tracks';
 import { addRoadSkidMarks } from './road-skid-marks';
 import { createTireFeedback } from './tire-feedback';
 import { makeSnowContact } from './snow-surface';
-import { stepVehicle, WHEEL_CONTACTS, type VehicleMotion } from './vehicle-dynamics';
+import { stepVehicle, WHEEL_CONTACTS, NITRO_SPEED_MULTIPLIER, MAX_NITRO_SPEED_KMH, type VehicleMotion } from './vehicle-dynamics';
 import { addFallingSnow } from './falling-snow';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { makeSpeedPass, addSteam } from './driving-atmosphere';
+import { addSteam } from './driving-atmosphere';
+import { makePresentationPass } from './presentation-pass';
 import { addInfrastructure, type CoveredRoad } from './city-infrastructure';
 import { makeCar } from './cinematic-car';
+import { AiTraffic, type TrafficMarker } from './ai-traffic';
+import { BULLET_SPEED, SHOT_IMPULSE, MINIGUN_SPIN, type GunShot } from './front-miniguns';
+import { projectileHitFraction } from './weapon-ballistics';
 import { addCityDetail, batchArchitecture, cityVisibility, cityEnvironment, poolStreetLights, wetStreetReflection } from './cinematic-city';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { addCyberpunkSky, makeHologramTexture } from './cyberpunk-atmosphere';
+import { NeonBloomPass } from './neon-bloom-pass';
+import { makeHologramTexture } from './cyberpunk-atmosphere';
 import { addSkylineBuilding, makeSkylineStyles, planSkylineBuilding, type FacadeStyle } from './cyberpunk-buildings';
+import { finishNightRoad } from './night-city-surfaces';
+import { screenClock } from './city-screens';
+import { PersonController, type PersonTelemetry, type VehicleBlocker } from './person-controller';
 
-export type CameraView = 'chase' | 'driver' | 'orbit';
+export type CameraView = 'chase' | 'driver' | 'orbit' | 'person';
 
 export type DriveTelemetry = {
   speed: number;
@@ -29,13 +35,14 @@ export type DriveTelemetry = {
   drifting: boolean;
   boosting: boolean;
   firing: boolean;
+  person?: PersonTelemetry;
 };
 
 type BuildingCollider = WorldCollider;
 type Particle = { position: THREE.Vector3; velocity: THREE.Vector3; life: number; color: THREE.Color };
 
-type Bullet = { position: THREE.Vector3; velocity: THREE.Vector3; life: number; trail: THREE.Vector3[] };
-type SmokeParticle = { position: THREE.Vector3; velocity: THREE.Vector3; life: number; maxLife: number; size: number; opacity: number };
+type Bullet = { position: THREE.Vector3; velocity: THREE.Vector3; life: number; age: number; tracer: boolean };
+type SmokeParticle = { position: THREE.Vector3; velocity: THREE.Vector3; life: number; maxLife: number; size: number; opacity: number; seed: number };
 
 function cameraWallEntry(from: THREE.Vector3, to: THREE.Vector3, solid: WorldCollider) {
   let enter = 0, exit = 1;
@@ -301,8 +308,10 @@ export class NeonCityGame {
   private readonly camera = new THREE.PerspectiveCamera(66, 1, 0.1, 6500);
   private readonly renderer: THREE.WebGLRenderer;
   private readonly composer: EffectComposer;
-  private readonly bloomPass: UnrealBloomPass;
-  private readonly speedPass = makeSpeedPass();
+  private readonly bloomPass: NeonBloomPass;
+  private readonly presentationPass = makePresentationPass();
+  private scenePixelRatio = 1;
+  private readonly scenePointMaterials: { material: THREE.PointsMaterial; size: number }[] = [];
   private readonly steam: ReturnType<typeof addSteam>;
   private readonly environment: THREE.WebGLRenderTarget;
   private readonly island: ReturnType<typeof addIslandEnvironment>;
@@ -310,11 +319,20 @@ export class NeonCityGame {
   private collisionWorld!: ColliderGrid;
   private cameraCollisionWorld!: ColliderGrid;
   private updateStreetLights!: ReturnType<typeof poolStreetLights>;
-  private readonly blurHandler = () => { this.pressed.clear(); this.orbitPointers.clear(); };
+  private readonly blurHandler = () => { this.pressed.clear(); this.orbitPointers.clear(); this.cancelNitro(); this.audio.stopFiring(); for (const flash of this.muzzleFlashes) flash.visible = false; };
+  private readonly visibilityHandler = () => { if (document.hidden) this.blurHandler(); };
   private driftTimer = 0;
   private physicsAccumulator = 0;
   private reverseEngaged = false;
   private readonly carRig: ReturnType<typeof makeCar>;
+  private readonly traffic: AiTraffic;
+  private readonly person: PersonController;
+  private readonly personBlockers: VehicleBlocker[] = [];
+  private readonly parkedMarker: TrafficMarker = { x: -22, z: -22, yaw: 0, color: '#ffcc7a' };
+  private personCameraYaw = 0;
+  private personCameraElevation = .22;
+  private personCameraDistance = 4.5;
+  private lastPersonMode = 'driving';
   private readonly car: THREE.Group;
   private readonly velocity = new THREE.Vector3();
   private readonly forward = new THREE.Vector3();
@@ -350,16 +368,14 @@ export class NeonCityGame {
   private readonly exhaustMeshes: THREE.Mesh[];
   private readonly headlights: THREE.Mesh[];
   private readonly underglow: THREE.Mesh;
-  private readonly boostLights: THREE.PointLight[];
   private readonly muzzleFlashes: THREE.Mesh[];
   private readonly brakeDiscs: THREE.Mesh[];
   private readonly reverseLights: THREE.Mesh[];
   private readonly gunBarrels: THREE.Group[];
   private brakeHeat = 0;
-  private minigunRpm = 0;
   private readonly onTelemetry: (telemetry: DriveTelemetry) => void;
   private readonly onCameraView: (view: CameraView) => void;
-  private readonly onMapPosition: (x: number, z: number, yaw: number) => void;
+  private readonly onMapPosition: (x: number, z: number, yaw: number, traffic: readonly TrafficMarker[], parked?: TrafficMarker) => void;
   private cameraView: CameraView = 'chase';
   private drivingCamera: 'chase' | 'driver' = 'chase';
   private orbitAzimuth = .65;
@@ -370,10 +386,11 @@ export class NeonCityGame {
   private readonly pointerMoveHandler = (event: PointerEvent) => this.onOrbitPointerMove(event);
   private readonly pointerUpHandler = (event: PointerEvent) => { this.orbitPointers.delete(event.pointerId); };
   private readonly wheelHandler = (event: WheelEvent) => {
-    if (this.cameraView !== 'orbit') return;
+    if (this.cameraView !== 'orbit' && this.cameraView !== 'person') return;
     event.preventDefault();
     const pixels = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1);
-    this.orbitDistance = THREE.MathUtils.clamp(this.orbitDistance * Math.exp(pixels * .001), 3.8, 12);
+    if (this.cameraView === 'person') this.personCameraDistance = THREE.MathUtils.clamp(this.personCameraDistance * Math.exp(pixels * .001), 2, 7);
+    else this.orbitDistance = THREE.MathUtils.clamp(this.orbitDistance * Math.exp(pixels * .001), 3.8, 12);
   };
   private readonly cameraTarget = new THREE.Vector3();
   private readonly desiredCamera = new THREE.Vector3();
@@ -385,47 +402,54 @@ export class NeonCityGame {
   private readonly exhaustParticles: THREE.Points;
   private readonly glowMap: THREE.CanvasTexture;
   private readonly bullets: Bullet[] = [];
+  private readonly freeBullets: Bullet[] = Array.from({ length: 200 }, () => ({ position: new THREE.Vector3(), velocity: new THREE.Vector3(), life: 0, age: 0, tracer: false }));
+  private readonly weaponPosition = new THREE.Vector3();
+  private readonly weaponDirection = new THREE.Vector3();
+  private readonly bulletPrevious = new THREE.Vector3();
   private readonly bulletGeometry = new THREE.BufferGeometry();
   private readonly bulletPositions = new Float32Array(200 * 6); // 200 bullets, 2 verts each (line segments)
   private readonly bulletColors = new Float32Array(200 * 6);
   private readonly bulletTrails: THREE.LineSegments;
-  private bulletGunIndex = 0; // alternates between left/right gun
   private readonly smokeParticles: SmokeParticle[] = [];
+  private readonly freeSmokeParticles: SmokeParticle[] = Array.from({ length: 512 }, () => ({ position: new THREE.Vector3(), velocity: new THREE.Vector3(), life: 0, maxLife: 1, size: 0, opacity: 0, seed: 0 }));
   private readonly smokeGeometry = new THREE.BufferGeometry();
-  private readonly smokePositions = new Float32Array(300 * 3);
-  private readonly smokeSizes = new Float32Array(300);
-  private readonly smokeOpacities = new Float32Array(300);
+  private readonly smokePositions = new Float32Array(512 * 3);
+  private readonly smokeSizes = new Float32Array(512);
+  private readonly smokeOpacities = new Float32Array(512);
   private readonly smokeMesh: THREE.Points;
   private gunSmokeTimer = 0;
-  private fireCooldown = 0;
-  private muzzleFlashTimer = 0;
   private active = false;
   private destroyed = false;
   private yaw = 0;
   private steerInput = 0;
   private boostCharge = 100;
+  private nitroRemaining = 0;
+  private nitroTargetSpeed = 0;
   private previousTime = 0;
   private elapsed = 0;
+  private readonly cityScreenClock = screenClock(this.scene);
   private qualityLevel = 0;
   private averageFrame = 16.7;
-  private qualityWarmup = 4;
+  private qualityWarmup = 8;
   private qualitySampleTime = 0;
   private qualitySampleFrames = 0;
   private qualitySampleMs = 0;
+  private qualitySampleSlowFrames = 0;
   private qualityRecoveryTime = 0;
+  private qualityPressureTime = 0;
+  private qualityResumeTime = 0;
   private telemetryTimer = 0;
-  private exhaustTimer = 0;
   private lastTelemetry: DriveTelemetry = { speed: 0, boost: 1, drifting: false, boosting: false, firing: false };
   private readonly frameHandler = (time: number) => this.frame(time);
 
   constructor(canvas: HTMLCanvasElement, onTelemetry: (telemetry: DriveTelemetry) => void, onCameraView: (view: CameraView) => void = () => {},
-    onMapPosition: (x: number, z: number, yaw: number) => void = () => {}) {
+    onMapPosition: (x: number, z: number, yaw: number, traffic: readonly TrafficMarker[], parked?: TrafficMarker) => void = () => {}) {
     this.onTelemetry = onTelemetry;
     this.onCameraView = onCameraView;
     this.onMapPosition = onMapPosition;
     this.scene.background = new THREE.Color(0x070c19);
-    this.scene.fog = new THREE.FogExp2(0x142136, 0.00235);
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    this.scene.fog = new THREE.FogExp2(0x111c2d, 0.00215);
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(this.renderPixelRatio());
     this.renderer.info.autoReset = false;
     this.renderer.shadowMap.enabled = true;
@@ -433,16 +457,16 @@ export class NeonCityGame {
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.02;
+    this.renderer.toneMappingExposure = 1.08;
     this.environment = cityEnvironment(this.renderer);
     this.scene.environment = this.environment.texture;
     this.scene.environmentIntensity = .7;
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), .38, .42, 1.18);
+    this.bloomPass = new NeonBloomPass(new THREE.Vector2(1, 1), .46, .48, 1.12);
+    this.presentationPass.uniforms.tBloom.value = this.bloomPass.bloomTexture;
     this.composer.addPass(this.bloomPass);
-    this.composer.addPass(this.speedPass);
-    this.composer.addPass(new OutputPass());
+    this.composer.addPass(this.presentationPass);
     this.carRig = makeCar();
     this.car = this.carRig.car;
     this.wheelMeshes = this.carRig.wheels;
@@ -450,7 +474,6 @@ export class NeonCityGame {
     this.exhaustMeshes = this.carRig.exhausts;
     this.headlights = this.carRig.headlights;
     this.underglow = this.carRig.underglow;
-    this.boostLights = this.carRig.boostLights;
     this.muzzleFlashes = this.carRig.muzzleFlashes;
     this.brakeDiscs = this.carRig.brakeDiscs;
     this.reverseLights = this.carRig.reverseLights;
@@ -503,6 +526,9 @@ export class NeonCityGame {
     this.snowTracks = addSnowTracks(this.scene, this.roadSnow.sample);
     this.roadSkidMarks = addRoadSkidMarks(this.scene);
     this.snowfall = addFallingSnow(this.scene, this.coveredRoads);
+    this.traffic = new AiTraffic(this.scene, this.carRig, this.collisionWorld, this.roadSnow.sample);
+    this.person = new PersonController(this.scene, this.cameraCollisionWorld, (x, z) => this.roadSnow.sample(x, z).height, this.carRig.body);
+    this.person.resetDriving(this.carPosition, this.yaw);
     this.updateWheelContacts();
     this.updateSnow();
 
@@ -523,10 +549,11 @@ export class NeonCityGame {
       }),
     );
     this.exhaustParticles.frustumCulled = false;
+    this.scenePointMaterials.push({ material: this.exhaustParticles.material as THREE.PointsMaterial, size: .29 });
     this.scene.add(this.exhaustParticles);
     // ── Bullet trail line segments ──
-    this.bulletGeometry.setAttribute('position', new THREE.BufferAttribute(this.bulletPositions, 3));
-    this.bulletGeometry.setAttribute('color', new THREE.BufferAttribute(this.bulletColors, 3));
+    this.bulletGeometry.setAttribute('position', new THREE.BufferAttribute(this.bulletPositions, 3).setUsage(THREE.DynamicDrawUsage));
+    this.bulletGeometry.setAttribute('color', new THREE.BufferAttribute(this.bulletColors, 3).setUsage(THREE.DynamicDrawUsage));
     this.bulletTrails = new THREE.LineSegments(
       this.bulletGeometry,
       new THREE.LineBasicMaterial({
@@ -539,29 +566,38 @@ export class NeonCityGame {
       }),
     );
     this.bulletTrails.frustumCulled = false;
-    this.scene.add(this.bulletTrails);
+    this.bulletGeometry.setDrawRange(0, 0); this.bulletTrails.visible = false;
+    this.scene.add(this.bulletTrails, this.carRig.miniguns.casingMesh);
     // ── Gun smoke particle system ──
-    this.smokeGeometry.setAttribute('position', new THREE.BufferAttribute(this.smokePositions, 3));
-    this.smokeGeometry.setAttribute('particleSize', new THREE.BufferAttribute(this.smokeSizes, 1));
-    this.smokeGeometry.setAttribute('particleOpacity', new THREE.BufferAttribute(this.smokeOpacities, 1));
+    this.smokeGeometry.setAttribute('position', new THREE.BufferAttribute(this.smokePositions, 3).setUsage(THREE.DynamicDrawUsage));
+    this.smokeGeometry.setAttribute('particleSize', new THREE.BufferAttribute(this.smokeSizes, 1).setUsage(THREE.DynamicDrawUsage));
+    this.smokeGeometry.setAttribute('particleOpacity', new THREE.BufferAttribute(this.smokeOpacities, 1).setUsage(THREE.DynamicDrawUsage));
     const smokeCanvas = document.createElement('canvas');
-    smokeCanvas.width = smokeCanvas.height = 64;
+    smokeCanvas.width = smokeCanvas.height = 128;
     const sCtx = smokeCanvas.getContext('2d')!;
-    const smokeGrad = sCtx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    smokeGrad.addColorStop(0, 'rgba(180,180,170,0.7)');
-    smokeGrad.addColorStop(0.3, 'rgba(140,140,135,0.4)');
-    smokeGrad.addColorStop(0.7, 'rgba(90,90,85,0.15)');
-    smokeGrad.addColorStop(1, 'rgba(60,60,55,0)');
-    sCtx.fillStyle = smokeGrad;
-    sCtx.fillRect(0, 0, 64, 64);
+    const cloud = sCtx.createImageData(128, 128);
+    // Layered, irregular density rather than a stack of circular smoke discs.
+    const density = (x: number, y: number, scale: number) => {
+      const a = x / scale, b = y / scale, ix = Math.floor(a), iy = Math.floor(b);
+      const hash = (u: number, v: number) => { const n = Math.sin(u * 127.1 + v * 311.7) * 43758.5453; return n - Math.floor(n); };
+      const fx = (a - ix) ** 2 * (3 - 2 * (a - ix)), fy = (b - iy) ** 2 * (3 - 2 * (b - iy));
+      return THREE.MathUtils.lerp(THREE.MathUtils.lerp(hash(ix, iy), hash(ix + 1, iy), fx), THREE.MathUtils.lerp(hash(ix, iy + 1), hash(ix + 1, iy + 1), fx), fy);
+    };
+    for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) {
+      const radius = Math.hypot((x - 64) / 64, (y - 64) / 64), index = (y * 128 + x) * 4;
+      const n = .5 * density(x, y, 24) + .3 * density(x, y, 12) + .2 * density(x, y, 5);
+      cloud.data[index] = cloud.data[index + 1] = cloud.data[index + 2] = 185 + n * 45;
+      cloud.data[index + 3] = 255 * Math.exp(-radius * radius * 2.8) * Math.max(0, 1 - radius ** 4) * (.55 + n * .65);
+    }
+    sCtx.putImageData(cloud, 0, 0);
     const smokeTexture = new THREE.CanvasTexture(smokeCanvas);
     smokeTexture.colorSpace = THREE.SRGBColorSpace;
     const smokeMaterial = new THREE.PointsMaterial({
       map: smokeTexture,
-      color: 0xb8b4a8,
+      color: 0xc3cbd0,
       size: 0.8,
       transparent: true,
-      opacity: 0.6,
+      opacity: 0.95,
       blending: THREE.NormalBlending,
       depthWrite: false,
       sizeAttenuation: true,
@@ -580,14 +616,24 @@ export class NeonCityGame {
     };
     this.smokeMesh = new THREE.Points(this.smokeGeometry, smokeMaterial);
     this.smokeMesh.frustumCulled = false;
+    this.smokeGeometry.setDrawRange(0, 0); this.smokeMesh.visible = false;
     this.scene.add(this.smokeMesh);
     this.camera.position.set(-22, 6, -8);
     this.camera.lookAt(0, 1.2, -2.2);
     this.resize();
+    // Prepare dormant weapons and nitro in the composer's color space before play.
+    const previousTarget = this.renderer.getRenderTarget();
+    this.renderer.setRenderTarget(this.composer.renderTarget1);
+    for (const effect of [this.carRig.nitroEffects.mesh, ...this.muzzleFlashes,
+      this.carRig.miniguns.glow, this.carRig.miniguns.casingMesh, this.bulletTrails, this.smokeMesh]) {
+      this.renderer.compile(effect, this.camera, this.scene);
+    }
+    this.renderer.setRenderTarget(previousTarget);
     window.addEventListener('resize', this.resizeHandler);
     window.addEventListener('keydown', this.keyDownHandler);
     window.addEventListener('keyup', this.keyUpHandler);
     window.addEventListener('blur', this.blurHandler);
+    document.addEventListener('visibilitychange', this.visibilityHandler);
     canvas.addEventListener('pointerdown', this.pointerDownHandler);
     canvas.addEventListener('pointermove', this.pointerMoveHandler);
     canvas.addEventListener('pointerup', this.pointerUpHandler);
@@ -600,15 +646,23 @@ export class NeonCityGame {
   private animationFrame = 0;
 
   private createWorld() {
-    addCyberpunkSky(this.scene);
-    const hemisphere = new THREE.HemisphereLight(0x8faecf, 0x21151e, .76);
+    // The camera-centered island sky supplies the full background, including the aurora.
+    // Broad sky and pavement bounce keep dark clothing and the car's shaded
+    // panels readable without lifting the neon or washing out the night sky.
+    const hemisphere = new THREE.HemisphereLight(0xb3c9e3, 0x48404c, 1.2);
+    hemisphere.name = 'City / soft night sky and ground bounce';
     this.scene.add(hemisphere);
-    const ambient = new THREE.AmbientLight(0x62738f, .25);
+    const ambient = new THREE.AmbientLight(0x8895aa, .32);
+    ambient.name = 'City / low ambient fill';
     this.scene.add(ambient);
-    const magentaMoon = new THREE.DirectionalLight(0xe69ab8, .48);
-    magentaMoon.position.set(-64, 92, 50);
-    this.scene.add(magentaMoon);
-    const cyanMoon = new THREE.DirectionalLight(0xb6d1e5, 1.35);
+    // Fill from the opposite side of the moon: both former directionals lit
+    // the rear of the car, leaving faces and the front fascia in deep shadow.
+    const streetFill = new THREE.DirectionalLight(0xdac4b3, .85);
+    streetFill.name = 'City / warm street fill';
+    streetFill.position.set(-36, 26, -42);
+    this.scene.add(streetFill);
+    const cyanMoon = new THREE.DirectionalLight(0xc2d5ec, 1.45);
+    cyanMoon.name = 'City / cool moon key';
     cyanMoon.position.set(72, 74, -88);
     this.keyLight = cyanMoon;
     cyanMoon.castShadow = true;
@@ -637,6 +691,8 @@ export class NeonCityGame {
     const wetRoadAlong = wetRoadAcross.clone();
     wetRoadAlong.map = alongTexture;
     wetRoadAlong.bumpMap = alongTexture;
+    finishNightRoad(wetRoadAcross);
+    finishNightRoad(wetRoadAlong);
     const puddleGeometry = new THREE.CircleGeometry(1, 14);
     const puddleMaterial = new THREE.MeshStandardMaterial({
       color: 0x131a21,
@@ -767,6 +823,7 @@ export class NeonCityGame {
       starGeometry,
       new THREE.PointsMaterial({ color: 0xa7d4ff, size: 0.7, transparent: true, opacity: 0.64, sizeAttenuation: true }),
     );
+    this.scenePointMaterials.push({ material: starsMesh.material, size: .7 });
     this.scene.add(starsMesh);
     addTunnel(this.scene, this.colliders);
     addSkyBridge(this.scene, -44, 0x26dcf1);
@@ -903,20 +960,24 @@ export class NeonCityGame {
   }
 
   private updateSnow(delta = 0) {
-    this.roadSnow.update(this.carPosition);
-    const height = window.innerHeight * this.renderer.getPixelRatio();
-    this.snowfall.update(this.elapsed, this.carPosition, this.yaw, height);
+    const focus = this.person && this.person.mode !== 'driving' ? this.person.position : this.carPosition;
+    this.roadSnow.update(focus);
+    const height = window.innerHeight * this.scenePixelRatio;
+    this.snowfall.update(this.elapsed, focus, this.person?.mode === 'walking' ? this.personCameraYaw : this.yaw, height);
     this.snowTracks.update(this.elapsed, this.wheelContacts, this.yaw, this.velocity.length(), Math.abs(this.velocity.dot(this.right)), height, delta);
   }
 
   private onKeyDown(event: KeyboardEvent) {
     const key = event.key.toLowerCase();
     if (!this.active) return;
-    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'f', 'c', 'o', '+', '=', '-'].includes(key)) event.preventDefault();
+    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'f', 'c', 'o', 'p', 'e', 'shift', '+', '=', '-'].includes(key)) event.preventDefault();
+    const firstPress = !event.repeat && !this.pressed.has(key);
     if ((key === 's' || key === 'arrowdown') && !event.repeat && !this.pressed.has('s') && !this.pressed.has('arrowdown')) {
       this.reverseEngaged = this.velocity.length() < .3;
     }
     this.pressed.add(key);
+    if (key === 'e' && firstPress) this.interactVehicle();
+    if ((key === 'p' || key === 'shift') && firstPress) this.activateNitro();
     if (key === 'r' && !event.repeat) this.reset();
     if (key === 'c' && !event.repeat) this.toggleCameraView();
     if (key === 'o' && !event.repeat) this.toggleOrbitView();
@@ -929,6 +990,8 @@ export class NeonCityGame {
 
   setDriving(active: boolean) {
     this.active = active;
+    this.cancelNitro();
+    if (!active) this.resetWeapons();
     this.pressed.clear();
     this.previousTime = 0;
     this.physicsAccumulator = 0;
@@ -940,14 +1003,56 @@ export class NeonCityGame {
 
   audioDiagnostics() { return this.audio.diagnostics(); }
 
+  interactVehicle() {
+    if (!this.active) return false;
+    const accepted = this.person.interact(this.carPosition, this.yaw, this.velocity.length());
+    if (accepted) {
+      this.cancelNitro(); this.resetWeapons();
+      this.velocity.set(0, 0, 0);
+      this.vehicleMotion.acceleration = this.vehicleMotion.yawRate = 0;
+      this.physicsAccumulator = 0; this.steerInput = 0; this.reverseEngaged = false;
+      if (this.person.mode === 'exiting') {
+        if (this.cameraView === 'chase' || this.cameraView === 'driver') this.drivingCamera = this.cameraView;
+        this.personCameraYaw = this.yaw;
+        this.personCameraElevation = .22;
+        this.setCameraView('person');
+      }
+      this.lastTelemetry = { speed: 0, boost: this.boostCharge / 100, drifting: false, boosting: false, firing: false, person: this.person.telemetry };
+      this.onTelemetry(this.lastTelemetry);
+    }
+    this.renderer.domElement.focus({ preventScroll: true });
+    return accepted;
+  }
+
+  activateNitro() {
+    if (!this.active || this.person.mode !== 'driving' || this.cameraView === 'orbit' || this.nitroRemaining > 0 || this.boostCharge < 99.999 ||
+      this.pressed.has('s') || this.pressed.has('arrowdown') || this.pressed.has(' ')) return false;
+    const longitudinal = -this.velocity.x * Math.sin(this.yaw) - this.velocity.z * Math.cos(this.yaw);
+    const accelerating = this.pressed.has('w') || this.pressed.has('arrowup');
+    if (longitudinal < -.05 || this.reverseEngaged || longitudinal <= 0 && !accelerating) return false;
+    this.nitroTargetSpeed = Math.min(MAX_NITRO_SPEED_KMH / 3.6,
+      Math.max(accelerating ? 1 : 0, this.velocity.length() * NITRO_SPEED_MULTIPLIER));
+    this.nitroRemaining = 3;
+    return true;
+  }
+
+  private cancelNitro() {
+    this.nitroRemaining = 0;
+    this.nitroTargetSpeed = 0;
+    this.carRig.nitroEffects.reset();
+    this.lastTelemetry.boosting = false;
+  }
+
   toggleCameraView() {
+    if (this.person.mode !== 'driving') return;
     this.setCameraView(this.cameraView === 'chase' ? 'driver' : 'chase');
   }
 
   toggleOrbitView() {
+    if (this.person.mode !== 'driving') return;
     if (this.cameraView === 'orbit') this.setCameraView(this.drivingCamera);
     else {
-      this.drivingCamera = this.cameraView;
+      this.drivingCamera = this.cameraView === 'driver' ? 'driver' : 'chase';
       this.orbitAzimuth = .65; this.orbitElevation = .25; this.orbitDistance = 7.2;
       this.setCameraView('orbit');
     }
@@ -955,10 +1060,11 @@ export class NeonCityGame {
 
   private setCameraView(view: CameraView) {
     this.cameraView = view;
+    if (view === 'orbit') this.cancelNitro();
     this.orbitPointers.clear();
     this.pressed.clear();
-    this.renderer.domElement.style.touchAction = view === 'orbit' ? 'none' : '';
-    this.renderer.domElement.style.cursor = view === 'orbit' ? 'grab' : '';
+    this.renderer.domElement.style.touchAction = view === 'orbit' || view === 'person' ? 'none' : '';
+    this.renderer.domElement.style.cursor = view === 'orbit' || view === 'person' ? 'grab' : '';
     this.camera.near = view === 'driver' ? .025 : .1;
     this.camera.fov = view === 'driver' ? 72 : view === 'orbit' ? 50 : 66;
     this.camera.updateProjectionMatrix();
@@ -969,7 +1075,7 @@ export class NeonCityGame {
   }
 
   private onOrbitPointerDown(event: PointerEvent) {
-    if (this.cameraView !== 'orbit' || event.button !== 0) return;
+    if ((this.cameraView !== 'orbit' && this.cameraView !== 'person') || (event.button !== 0 && event.button !== 2)) return;
     event.preventDefault();
     this.orbitPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     this.renderer.domElement.setPointerCapture(event.pointerId);
@@ -978,8 +1084,14 @@ export class NeonCityGame {
 
   private onOrbitPointerMove(event: PointerEvent) {
     const point = this.orbitPointers.get(event.pointerId);
-    if (!point || this.cameraView !== 'orbit') return;
+    if (!point || (this.cameraView !== 'orbit' && this.cameraView !== 'person')) return;
     event.preventDefault();
+    if (this.cameraView === 'person') {
+      this.personCameraYaw -= (event.clientX - point.x) * .006;
+      this.personCameraElevation = THREE.MathUtils.clamp(this.personCameraElevation + (event.clientY - point.y) * .004, -.10, .82);
+      point.x = event.clientX; point.y = event.clientY;
+      return;
+    }
     if (this.orbitPointers.size > 1) {
       const other = Array.from(this.orbitPointers.entries()).find(([id]) => id !== event.pointerId)?.[1];
       if (other) {
@@ -995,10 +1107,34 @@ export class NeonCityGame {
   }
 
   private updateCamera(delta: number, snap = false) {
+    if (snap) {
+      this.reflections.invalidate();
+      this.shadowPosition.set(Infinity, Infinity, Infinity); this.shadowFrame = 0;
+    }
     this.forward.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const speedRatio = Math.min(this.velocity.length() / 76, 1);
     const driver = this.cameraView === 'driver';
+    if (this.cameraView === 'person') {
+      this.cameraTarget.copy(this.person.position); this.cameraTarget.y += 1.14;
+      const distance = this.personCameraDistance * Math.max(1, .82 / this.camera.aspect);
+      const horizontal = Math.cos(this.personCameraElevation) * distance;
+      this.desiredCamera.set(this.cameraTarget.x + Math.sin(this.personCameraYaw) * horizontal,
+        this.cameraTarget.y + Math.sin(this.personCameraElevation) * distance,
+        this.cameraTarget.z + Math.cos(this.personCameraYaw) * horizontal);
+      let limit = 1;
+      for (const solid of this.cameraCollisionWorld.query(this.cameraTarget, this.desiredCamera)) limit = Math.min(limit, cameraWallEntry(this.cameraTarget, this.desiredCamera, solid));
+      this.desiredCamera.lerp(this.cameraTarget, 1 - limit);
+      this.desiredCamera.y = Math.max(this.desiredCamera.y, this.roadSnow.sample(this.desiredCamera.x, this.desiredCamera.z).height + .22);
+      if (snap) this.camera.position.copy(this.desiredCamera);
+      else this.camera.position.lerp(this.desiredCamera, 1 - Math.exp(-delta * 12));
+      // The smoothed orbit can cut across a corner even when its endpoint is clear.
+      let actualLimit = 1;
+      for (const solid of this.cameraCollisionWorld.query(this.cameraTarget, this.camera.position)) actualLimit = Math.min(actualLimit, cameraWallEntry(this.cameraTarget, this.camera.position, solid));
+      this.camera.position.lerp(this.cameraTarget, 1 - actualLimit);
+      this.camera.lookAt(this.cameraTarget);
+      return;
+    }
     if (this.cameraView === 'orbit') {
       this.orbitAzimuth += ((this.pressed.has('arrowright') ? 1 : 0) - (this.pressed.has('arrowleft') ? 1 : 0)) * delta * 1.6;
       this.orbitElevation = THREE.MathUtils.clamp(this.orbitElevation + ((this.pressed.has('arrowup') ? 1 : 0) - (this.pressed.has('arrowdown') ? 1 : 0)) * delta, .04, 1.42);
@@ -1058,25 +1194,29 @@ export class NeonCityGame {
     this.roadSkidMarks.resetContinuity(); this.tireFeedback.reset();
     this.car.rotation.set(0, 0, 0);
     this.carRig.body.rotation.set(0, 0, 0);
+    this.person.resetDriving(this.carPosition, this.yaw);
+    this.carRig.driverDoor.rotation.y = 0;
+    this.lastPersonMode = 'driving';
+    if (this.cameraView === 'person') this.setCameraView(this.drivingCamera);
     this.particles.length = 0;
     this.pressed.clear();
     this.steerInput = 0;
     this.boostCharge = 100;
+    this.cancelNitro();
     this.carRig.cockpit.steeringWheel.rotation.z = 0;
     this.updateCamera(0, true);
-    this.exhaustTimer = 0;
-    this.bullets.length = 0;
-    this.fireCooldown = 0;
-    this.muzzleFlashTimer = 0;
+    this.resetWeapons();
     for (const flash of this.muzzleFlashes) flash.visible = false;
-    this.lastTelemetry = { speed: 0, boost: 1, drifting: false, boosting: false, firing: false };
+    this.lastTelemetry = { speed: 0, boost: 1, drifting: false, boosting: false, firing: false, person: this.person.telemetry };
     this.carRig.cockpit.refresh(this.lastTelemetry);
     this.onTelemetry(this.lastTelemetry);
-    this.onMapPosition(this.carPosition.x, this.carPosition.z, this.yaw);
+    this.onMapPosition(this.carPosition.x, this.carPosition.z, this.yaw, this.traffic.markers);
   }
 
   private renderPixelRatio() {
-    const pixelBudget = [1_000_000, 750_000, 520_000, 380_000][this.qualityLevel];
+    // Keep the starting image detail while adapting reflection and shadow work.
+    // A larger presentation canvas cannot recover pixels discarded by a low tier.
+    const pixelBudget = 1_000_000;
     return Math.min(window.devicePixelRatio || 1, 1.25,
       Math.sqrt(pixelBudget / Math.max(1, window.innerWidth * window.innerHeight)));
   }
@@ -1084,42 +1224,73 @@ export class NeonCityGame {
   private updateRenderQuality(frameMs: number, delta: number) {
     // Ignore shader warmup, background tabs and isolated long pauses. Measure
     // sustained frame cost so one collision or a resize cannot lower quality.
-    if (document.hidden || this.elapsed < this.qualityWarmup || frameMs > 200 || delta <= 0) return;
+    if (document.hidden || this.elapsed < Math.max(this.qualityWarmup, this.qualityResumeTime) || frameMs > 200 || delta <= 0) return;
     this.qualitySampleTime += delta;
     this.qualitySampleFrames++;
     this.qualitySampleMs += frameMs;
-    if (this.qualitySampleTime < 2 || this.qualitySampleFrames < 30) return;
+    if (frameMs > 25) this.qualitySampleSlowFrames++;
+    if (this.qualitySampleTime < 4 || this.qualitySampleFrames < 60) return;
     this.averageFrame = this.qualitySampleMs / this.qualitySampleFrames;
+    const slowFrameRatio = this.qualitySampleSlowFrames / this.qualitySampleFrames;
     let next = this.qualityLevel;
-    if (this.averageFrame > 24 && next < 3) {
-      next = Math.min(3, next + (this.averageFrame > 40 ? 2 : 1));
+    // A few deferred reflection captures or new shaders are not sustained overload.
+    // Require two sampling windows before reducing effects, one step at a time.
+    const pressure = this.averageFrame > 22 || slowFrameRatio > .18;
+    this.qualityPressureTime = pressure ? this.qualityPressureTime + this.qualitySampleTime : 0;
+    if ((this.qualityPressureTime >= 8 || this.averageFrame > 45) && next < 4) {
+      next++;
+      this.qualityPressureTime = 0;
       this.qualityRecoveryTime = 0;
-    } else if (this.averageFrame < 17.3 && next > 0) {
+    } else if (this.averageFrame < 17.8 && slowFrameRatio < .04 && next > 0) {
       this.qualityRecoveryTime += this.qualitySampleTime;
-      // Recover slowly to avoid repeatedly rebuilding render targets near a threshold.
-      if (this.qualityRecoveryTime >= 30) { next--; this.qualityRecoveryTime = 0; }
+      if (this.qualityRecoveryTime >= 12) { next--; this.qualityRecoveryTime = 0; }
     } else this.qualityRecoveryTime = 0;
     this.qualitySampleTime = 0; this.qualitySampleFrames = 0; this.qualitySampleMs = 0;
+    this.qualitySampleSlowFrames = 0;
     if (next === this.qualityLevel) return;
     this.qualityLevel = next;
-    this.reflections.setQuality(next);
-    this.renderer.shadowMap.enabled = next < 3;
-    this.renderer.shadowMap.needsUpdate = next < 3;
     this.resize();
   }
 
   private resize() {
     const width = Math.max(1, window.innerWidth);
     const height = Math.max(1, window.innerHeight);
-    this.renderer.setPixelRatio(this.renderPixelRatio());
+    this.scenePixelRatio = this.renderPixelRatio();
+    this.qualityResumeTime = this.elapsed + 2;
+    this.qualitySampleTime = 0; this.qualitySampleFrames = 0;
+    this.qualitySampleMs = 0; this.qualitySampleSlowFrames = 0;
+    this.qualityPressureTime = 0; this.qualityRecoveryTime = 0;
+    // Present the low-resolution scene at a modestly higher resolution so the
+    // edge/detail resolve can reconstruct it before the browser stretches the canvas.
+    const presentationRatio = Math.min(window.devicePixelRatio || 1, 1.25,
+      Math.max(this.scenePixelRatio, Math.sqrt(650_000 / (width * height))));
+    this.renderer.setPixelRatio(presentationRatio);
+    // Built-in point shaders use the renderer's ratio, even inside the composer.
+    // Keep their projected size tied to the scene buffer during reconstruction.
+    for (const point of this.scenePointMaterials) point.material.size = point.size * this.scenePixelRatio / presentationRatio;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.composer.setPixelRatio(this.renderer.getPixelRatio());
+    this.composer.setPixelRatio(this.scenePixelRatio);
     this.renderer.setSize(width, height, false);
     this.composer.setSize(width, height);
-    // A glow is already blurred; its intermediate targets can be smaller than the sharp city image.
-    const bloomScale = [.65, .55, .45, .38][this.qualityLevel] * this.renderer.getPixelRatio();
-    this.bloomPass.setSize(Math.max(1, Math.round(width * bloomScale)), Math.max(1, Math.round(height * bloomScale)));
+    this.presentationPass.setQuality(0);
+    this.island.aurora.setQuality(0);
+    // Glow is built in five small draws and added in the existing output draw.
+    // Its appearance stays consistent instead of switching off while driving.
+    this.bloomPass.enabled = true;
+    this.presentationPass.uniforms.bloomEnabled.value = 1;
+    this.bloomPass.setSize(width * this.scenePixelRatio, height * this.scenePixelRatio);
+    this.reflections.setQuality(this.qualityLevel);
+    this.reflections.invalidate();
+    // Retain shadows at every tier; reduce their capture size and refresh rate.
+    this.renderer.shadowMap.enabled = true;
+    const shadowSize = [1024, 768, 512, 512, 384][this.qualityLevel];
+    if (this.keyLight.shadow.mapSize.x !== shadowSize) {
+      this.keyLight.shadow.mapSize.set(shadowSize, shadowSize);
+      this.keyLight.shadow.map?.dispose(); this.keyLight.shadow.map = null;
+    }
+    this.shadowPosition.set(Infinity, Infinity, Infinity); this.shadowFrame = 0;
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   private updateDriving(delta: number) {
@@ -1131,27 +1302,39 @@ export class NeonCityGame {
     const steer = (key('a') || !orbit && key('arrowleft') ? 1 : 0) - (key('d') || !orbit && key('arrowright') ? 1 : 0);
     this.steerInput = steer;
     const drifting = key(' ');
-    const forwardInput = throttle > 0;
-    const boosting = key('shift') && this.boostCharge > 0 && forwardInput && brake === 0 && !drifting;
+    if (brake > 0 || drifting || throttle < 0 || orbit) this.cancelNitro();
+    let boosting = this.nitroRemaining > 0 && this.boostCharge > 0;
     this.previousPosition.copy(this.carPosition);
     this.vehicleMotion.yaw = this.yaw;
     const step = 1 / 120;
     this.physicsAccumulator += delta;
-    const input = { throttle, brake, steer, handbrake: drifting, boost: boosting };
+    const input = { throttle, brake, steer, handbrake: drifting, boost: boosting, boostTargetSpeed: this.nitroTargetSpeed };
+    let trafficImpact = 0;
     while (this.physicsAccumulator + 1e-9 >= step) {
+      input.boost = this.nitroRemaining > 0 && this.boostCharge > 0;
+      input.boostTargetSpeed = input.boost ? this.nitroTargetSpeed : 0;
       this.updateWheelContacts();
       stepVehicle(this.vehicleMotion, input, this.wheelContacts, step);
+      const impact = this.traffic.step(step, this.vehicleMotion);
+      if (impact > 0) this.cancelNitro();
+      trafficImpact = Math.max(trafficImpact, impact);
+      if (input.boost) {
+        this.nitroRemaining = Math.max(0, this.nitroRemaining - step);
+        this.boostCharge = Math.max(0, this.boostCharge - step * (100 / 3));
+      } else this.boostCharge = Math.min(100, this.boostCharge + step * (drifting ? 4 : 10));
       this.yaw = this.vehicleMotion.yaw;
       this.physicsAccumulator = Math.max(0, this.physicsAccumulator - step);
     }
+    if (trafficImpact > 8) for (let i = 0; i < 10; i++) this.spawnParticle(this.carPosition, 0xffb34b, false);
     this.forward.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const longitudinal = this.velocity.dot(this.forward);
-    if (boosting) this.boostCharge = Math.max(0, this.boostCharge - delta * 25);
-    else this.boostCharge = Math.min(100, this.boostCharge + delta * (drifting ? 4 : 10));
+    boosting = this.nitroRemaining > 1e-8 && this.boostCharge > 1e-8;
+    if (!boosting) { this.nitroRemaining = 0; this.nitroTargetSpeed = 0; }
 
     const collision = this.collisionWorld.sweep(this.previousPosition, this.carPosition, this.yaw);
     if (collision) {
+      this.cancelNitro(); boosting = false;
       const travel = this.previousPosition.distanceTo(this.carPosition);
       const contact = Math.max(0, collision.time - .002 / Math.max(travel, .002));
       this.carPosition.lerpVectors(this.previousPosition, this.carPosition, contact);
@@ -1166,6 +1349,7 @@ export class NeonCityGame {
       if (normalSpeed < 0) { this.velocity.x -= normalSpeed * 1.04 * nx; this.velocity.z -= normalSpeed * 1.04 * nz; }
     }
     if (Math.abs(this.carPosition.x) > CITY_EDGE || Math.abs(this.carPosition.z) > CITY_EDGE) {
+      this.cancelNitro(); boosting = false;
       if (Math.abs(this.carPosition.x) > CITY_EDGE) { this.carPosition.x = THREE.MathUtils.clamp(this.carPosition.x, -CITY_EDGE, CITY_EDGE); this.velocity.x *= -.04; }
       if (Math.abs(this.carPosition.z) > CITY_EDGE) { this.carPosition.z = THREE.MathUtils.clamp(this.carPosition.z, -CITY_EDGE, CITY_EDGE); this.velocity.z *= -.04; }
     }
@@ -1202,7 +1386,7 @@ export class NeonCityGame {
     // Engine idle vibration + high-speed road texture feedback + weapon recoil shudder
     const idleThrum = this.velocity.length() < 1 ? Math.sin(this.elapsed * 26) * 0.0018 : 0;
     const roadRumble = Math.sin(this.elapsed * 44) * speedRatio * 0.0035;
-    const recoilShudder = firing ? (Math.random() - 0.5) * 0.006 : 0;
+    const recoilShudder = (this.carRig.miniguns.recoil[0] + this.carRig.miniguns.recoil[1]) * -.14;
     this.carRig.body.position.y = idleThrum + roadRumble + recoilShudder;
 
     // Dynamic brake disc thermal heating & dissipation (glowing red-hot carbon rotors)
@@ -1221,20 +1405,7 @@ export class NeonCityGame {
       (revLight.material as THREE.MeshStandardMaterial).emissiveIntensity = reversing ? 2.2 : 0.0;
     }
 
-    // Minigun barrel spinning & recoil kick
-    if (firing) {
-      this.minigunRpm = Math.min(65, this.minigunRpm + delta * 140);
-    } else {
-      this.minigunRpm = Math.max(0, this.minigunRpm - delta * 45);
-    }
-    for (const gun of this.gunBarrels) {
-      if (gun.parent) gun.parent.visible = firing;
-      gun.rotation.z += this.minigunRpm * delta;
-      gun.position.z = firing ? Math.sin(this.elapsed * 90) * .012 : 0;
-    }
-    for (const flame of this.carRig.flames) {
-      flame.visible = boosting; flame.scale.y = .9 + Math.sin(this.elapsed * 43) * .18;
-    }
+    this.carRig.nitroEffects.update(this.elapsed, delta, boosting ? 1 : 0);
     const brakeIntensity = braking ? 4.5 : 1.6;
     for (const brakeLight of this.brakeLights) {
       (brakeLight.material as THREE.MeshStandardMaterial).emissiveIntensity = brakeIntensity;
@@ -1243,7 +1414,6 @@ export class NeonCityGame {
     for (const exhaust of this.exhaustMeshes) {
       (exhaust.material as THREE.MeshStandardMaterial).emissiveIntensity = engineIntensity;
     }
-    for (const light of this.boostLights) light.intensity = boosting ? 8 : 0;
     this.underglow.scale.set(boosting ? 1.05 : 1, 1, boosting ? 1.2 : 1);
     const lateralSpeed = Math.abs(this.velocity.dot(this.right));
     const tires = this.tireFeedback.update(this.velocity.length(), lateralSpeed, brake, drifting, this.wheelContacts);
@@ -1254,58 +1424,7 @@ export class NeonCityGame {
       for (let i = 0; i < 3; i++) this.spawnParticle(this.car.position, 0x7ba7b7, false);
       this.driftTimer = .035;
     }
-    this.exhaustTimer -= delta;
-    if (boosting && this.exhaustTimer <= 0) {
-      this.spawnParticle(this.car.position, 0x48efff, true);
-      this.exhaustTimer = 0.022;
-    }
-    // ── Firing system — continuous minigun ──
-    this.fireCooldown -= delta;
-    this.muzzleFlashTimer -= delta;
-    this.gunSmokeTimer -= delta;
-    if (firing) {
-      this.audio.fireGun(); // Called every frame for continuous minigun sound
-      if (this.fireCooldown <= 0) {
-        this.spawnBullet();
-        this.fireCooldown = 0.065; // fire rate: ~15 rounds/sec (visible individual bullets)
-        this.muzzleFlashTimer = 0.03;
-      }
-      // Continuous barrel smoke while firing
-      if (this.gunSmokeTimer <= 0) {
-        for (const gunX of [-0.45, 0.45]) {
-          const localTip = new THREE.Vector3(gunX, 0.38, -2.64);
-          localTip.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
-          const smokePos = this.carPosition.clone().add(localTip);
-          const vel = new THREE.Vector3(
-            (Math.random() - 0.5) * 0.8,
-            0.5 + Math.random() * 1.0,
-            (Math.random() - 0.5) * 0.8,
-          );
-          vel.addScaledVector(this.velocity, 0.06);
-          const maxLife = 0.8 + Math.random() * 0.6;
-          this.smokeParticles.push({
-            position: smokePos,
-            velocity: vel,
-            life: maxLife,
-            maxLife,
-            size: 0.15 + Math.random() * 0.2,
-            opacity: 0.3 + Math.random() * 0.2,
-          });
-          if (this.smokeParticles.length > 300) this.smokeParticles.shift();
-        }
-        this.gunSmokeTimer = 0.03;
-      }
-    } else {
-      this.audio.stopFiring();
-    }
-    // Muzzle flash visibility — rapid flicker for minigun
-    for (const flash of this.muzzleFlashes) {
-      flash.visible = this.muzzleFlashTimer > 0;
-      if (flash.visible) {
-        flash.scale.set(0.5 + Math.random() * 0.8, 0.5 + Math.random() * 0.7, 0.8 + Math.random() * 0.4);
-        flash.rotation.z = Math.random() * Math.PI * 2;
-      }
-    }
+    this.updateWeapons(delta, firing);
     const speed = this.velocity.length() * 3.6;
     const telemetry: DriveTelemetry = { speed, boost: this.boostCharge / 100, drifting: sliding, boosting, firing };
     this.lastTelemetry = telemetry;
@@ -1315,127 +1434,123 @@ export class NeonCityGame {
     });
   }
 
-  private spawnBullet() {
-    // Alternate between left and right gun
-    const gunOffsets = [-0.45, 0.45];
-    const gunX = gunOffsets[this.bulletGunIndex % 2];
-    this.bulletGunIndex++;
-    // Compute world-space gun tip position
-    const localGunTip = new THREE.Vector3(gunX, 0.38, -2.64);
-    localGunTip.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
-    const position = this.carPosition.clone().add(localGunTip);
-    // Bullet velocity = car forward * bullet speed + car velocity
-    const bulletSpeed = 160;
-    const velocity = this.forward.clone().multiplyScalar(bulletSpeed).add(this.velocity);
-    this.bullets.push({ position, velocity, life: 1.2, trail: [position.clone()] });
-    if (this.bullets.length > 200) this.bullets.shift();
-    // Spawn bright muzzle sparks — hot metal fragments
-    for (let i = 0; i < 5; i++) {
-      const sparkPos = position.clone();
-      sparkPos.x += (Math.random() - 0.5) * 0.12;
-      sparkPos.y += (Math.random() - 0.5) * 0.12;
-      const sparkVel = velocity.clone().multiplyScalar(0.05 + Math.random() * 0.04);
-      sparkVel.x += (Math.random() - 0.5) * 12;
-      sparkVel.y += 1 + Math.random() * 5;
-      sparkVel.z += (Math.random() - 0.5) * 12;
-      const sparkColor = Math.random() > 0.5 ? 0xff8833 : 0xffcc44;
-      this.particles.push({ position: sparkPos, velocity: sparkVel, life: 0.1 + Math.random() * 0.12, color: new THREE.Color(sparkColor) });
-      if (this.particles.length > 180) this.particles.shift();
-    }
-    // Spawn gunsmoke from the muzzle
-    this.spawnGunSmoke(position);
+  private resetWeapons() {
+    this.carRig.miniguns.reset(); this.audio.stopFiring(); this.audio.updateGunSpin(0);
+    this.freeSmokeParticles.push(...this.smokeParticles); this.freeBullets.push(...this.bullets);
+    this.smokeParticles.length = 0; this.bullets.length = 0; this.gunSmokeTimer = 0;
+    this.smokeGeometry.setDrawRange(0, 0); this.bulletGeometry.setDrawRange(0, 0);
+    this.smokeMesh.visible = this.bulletTrails.visible = false;
   }
 
-  private spawnGunSmoke(muzzlePos: THREE.Vector3) {
-    for (let i = 0; i < 3; i++) {
-      const pos = muzzlePos.clone();
-      pos.x += (Math.random() - 0.5) * 0.15;
-      pos.y += 0.05 + Math.random() * 0.1;
-      pos.z += (Math.random() - 0.5) * 0.15;
-      const vel = new THREE.Vector3(
-        (Math.random() - 0.5) * 1.5,
-        0.8 + Math.random() * 1.5,
-        (Math.random() - 0.5) * 1.5,
-      );
-      vel.addScaledVector(this.velocity, 0.08);
-      const maxLife = 0.6 + Math.random() * 0.8;
-      this.smokeParticles.push({
-        position: pos,
-        velocity: vel,
-        life: maxLife,
-        maxLife,
-        size: 0.3 + Math.random() * 0.4,
-        opacity: 0.5 + Math.random() * 0.3,
-      });
-      if (this.smokeParticles.length > 300) this.smokeParticles.shift();
+  private updateWeapons(delta: number, firing: boolean) {
+    const guns = this.carRig.miniguns;
+    const shots = guns.update(delta, firing, this.elapsed, this.velocity, this.qualityLevel);
+    if (firing) this.audio.fireGun(guns.spin / MINIGUN_SPIN); else this.audio.stopFiring();
+    this.audio.updateGunSpin(guns.spin / MINIGUN_SPIN);
+    for (const shot of shots) {
+      // Equal/opposite projectile momentum reaches the vehicle as well as the cradle.
+      this.velocity.addScaledVector(shot.direction, -SHOT_IMPULSE / 1950);
+      this.spawnBullet(shot);
+      if (shot.tracer || this.qualityLevel < 2) this.spawnGunSmoke(shot.position, shot.direction);
     }
+    this.gunSmokeTimer -= delta;
+    if (this.gunSmokeTimer <= 0) {
+      guns.muzzleAnchors.forEach((anchor, i) => {
+        if (guns.heat[i] < .07) return;
+        const position = anchor.getWorldPosition(this.weaponPosition);
+        const direction = this.weaponDirection.set(0, 0, -1).transformDirection(anchor.matrixWorld);
+        this.spawnGunSmoke(position, direction, .3 + guns.heat[i] * .25, true);
+      });
+      this.gunSmokeTimer = .085;
+    }
+  }
+
+  private spawnBullet(shot: GunShot) {
+    const bullet = this.freeBullets.pop() ?? this.bullets.shift()!;
+    const position = bullet.position.copy(shot.position);
+    const direction = bullet.velocity.copy(shot.direction);
+    direction.x += (Math.random() - .5) * .002; direction.y += (Math.random() - .5) * .002;
+    direction.normalize();
+    const velocity = direction.multiplyScalar(BULLET_SPEED).add(this.velocity);
+    bullet.velocity.copy(velocity); bullet.life = .65; bullet.age = 0; bullet.tracer = shot.tracer; this.bullets.push(bullet);
+    for (let i = 0; shot.tracer && i < 2; i++) {
+      const sparkVelocity = shot.direction.clone().multiplyScalar(5 + Math.random() * 7).addScaledVector(this.velocity, .6);
+      sparkVelocity.x += (Math.random() - .5) * 2; sparkVelocity.y += Math.random() * 1.5;
+      this.particles.push({ position: position.clone(), velocity: sparkVelocity, life: .045 + Math.random() * .06, color: new THREE.Color(0xffb968) });
+      if (this.particles.length > 180) this.particles.shift();
+    }
+  }
+
+  private spawnGunSmoke(muzzlePos: THREE.Vector3, direction: THREE.Vector3, intensity = 1, residual = false) {
+    const particle = this.freeSmokeParticles.pop() ?? this.smokeParticles.shift()!;
+    const velocity = particle.velocity.copy(direction).multiplyScalar(residual ? .15 : 2 + Math.random() * 2).addScaledVector(this.velocity, residual ? .25 : .7);
+    velocity.y += residual ? .45 : .2;
+    const maxLife = (residual ? 1.6 : 1.4) + Math.random() * .75;
+    particle.position.copy(muzzlePos); particle.life = particle.maxLife = maxLife;
+    particle.size = residual ? .17 : .20 + Math.random() * .12; particle.opacity = (residual ? .48 : .76) * intensity;
+    particle.seed = Math.random() * 20; this.smokeParticles.push(particle);
+  }
+
+  private spawnBulletImpact(position: THREE.Vector3, direction: THREE.Vector3) {
+    for (let i = 0; i < 7; i++) {
+      const velocity = direction.clone().multiplyScalar(-1 - Math.random() * 3);
+      velocity.x += (Math.random() - .5) * 5; velocity.y = .8 + Math.random() * 2; velocity.z += (Math.random() - .5) * 5;
+      this.particles.push({ position: position.clone(), velocity, life: .13 + Math.random() * .18, color: new THREE.Color(i % 2 ? 0xff9e3d : 0xffd291) });
+    }
+    this.spawnGunSmoke(position, direction.clone().negate(), .65);
+    if (this.particles.length > 180) this.particles.splice(0, this.particles.length - 180);
   }
 
   private updateBullets(delta: number) {
-    // Update bullet positions and remove expired ones
     for (let i = this.bullets.length - 1; i >= 0; i--) {
-      const bullet = this.bullets[i];
-      bullet.life -= delta;
-      if (bullet.life <= 0) {
-        this.bullets.splice(i, 1);
-        continue;
+      const bullet = this.bullets[i]; bullet.life -= delta; bullet.age += delta;
+      if (bullet.life <= 0) { this.recycleBullet(i); continue; }
+      const previous = this.bulletPrevious.copy(bullet.position);
+      // SI-unit flight with gravity and mild aerodynamic drag.
+      bullet.position.addScaledVector(bullet.velocity, delta); bullet.position.y -= 4.905 * delta * delta;
+      bullet.velocity.y -= 9.81 * delta; bullet.velocity.multiplyScalar(Math.exp(-.065 * delta));
+      let hit: number | null = null;
+      if (bullet.position.y <= .035) hit = previous.y <= .035 ? 0 : (previous.y - .035) / (previous.y - bullet.position.y);
+      for (const building of this.collisionWorld.query(previous, bullet.position)) {
+        const fraction = projectileHitFraction(previous, bullet.position, building);
+        if (fraction !== null && (hit === null || fraction < hit)) hit = fraction;
       }
-      bullet.position.addScaledVector(bullet.velocity, delta);
-      // Check building collisions
-      for (const building of this.collisionWorld.query(bullet.position)) {
-        if (Math.abs(bullet.position.x - building.x) < building.hx &&
-            Math.abs(bullet.position.z - building.z) < building.hz &&
-            bullet.position.y >= (building.minY ?? 0) && bullet.position.y <= (building.maxY ?? Infinity)) {
-          // Spawn impact sparks
-          for (let j = 0; j < 6; j++) {
-            this.spawnParticle(bullet.position, 0xff8833, false);
-          }
-          this.bullets.splice(i, 1);
-          break;
+      if (hit !== null) {
+        const impact = previous.lerp(bullet.position, hit);
+        // Flight and collision remain exact for all rounds; distant sparks cannot be seen.
+        const effectRange = this.qualityLevel >= 2 ? 90 : 140;
+        if ((bullet.tracer || this.qualityLevel < 2) && impact.distanceToSquared(this.carPosition) < effectRange * effectRange) {
+          this.spawnBulletImpact(impact, this.weaponDirection.copy(bullet.velocity).normalize());
         }
+        this.recycleBullet(i);
       }
     }
-    // Render each bullet as a short individual tracer segment
-    for (let i = 0; i < 200; i++) {
-      const idx = i * 6;
-      const bullet = this.bullets[i];
-      if (bullet) {
-        const fade = Math.min(bullet.life * 3, 1);
-        // Compute the tail as a moderately lengthy tracer streak (~3.8m), leaving clean gaps between rounds
-        const speed = Math.sqrt(bullet.velocity.x ** 2 + bullet.velocity.y ** 2 + bullet.velocity.z ** 2);
-        const maxTracerLen = Math.min(4.0, speed * 0.024); // ~3.84m at 160 m/s
-        const distTraveled = Math.max(0.6, (1.2 - bullet.life) * speed);
-        const tracerLen = Math.min(maxTracerLen, distTraveled);
-        const dirX = bullet.velocity.x / speed;
-        const dirY = bullet.velocity.y / speed;
-        const dirZ = bullet.velocity.z / speed;
-        // Head = current position
-        this.bulletPositions[idx] = bullet.position.x;
-        this.bulletPositions[idx + 1] = bullet.position.y;
-        this.bulletPositions[idx + 2] = bullet.position.z;
-        // Tail = slightly behind the head
-        this.bulletPositions[idx + 3] = bullet.position.x - dirX * tracerLen;
-        this.bulletPositions[idx + 4] = bullet.position.y - dirY * tracerLen;
-        this.bulletPositions[idx + 5] = bullet.position.z - dirZ * tracerLen;
-        // Bright yellow-white head, dimmer orange tail
-        this.bulletColors[idx] = 1.0 * fade;
-        this.bulletColors[idx + 1] = 0.95 * fade;
-        this.bulletColors[idx + 2] = 0.5 * fade;
-        this.bulletColors[idx + 3] = 1.0 * fade * 0.35;
-        this.bulletColors[idx + 4] = 0.28 * fade * 0.35;
-        this.bulletColors[idx + 5] = 0.04 * fade * 0.35;
-      } else {
-        this.bulletPositions[idx] = 0;
-        this.bulletPositions[idx + 1] = -1000;
-        this.bulletPositions[idx + 2] = 0;
-        this.bulletPositions[idx + 3] = 0;
-        this.bulletPositions[idx + 4] = -1000;
-        this.bulletPositions[idx + 5] = 0;
-      }
+    // Upload only the live tracer span; stale buffer entries stay outside the draw range.
+    let count = 0;
+    for (const bullet of this.bullets) {
+      if (!bullet.tracer) continue;
+      const idx = count++ * 6, fade = Math.min(bullet.life * 3, 1), speed = bullet.velocity.length();
+      const length = Math.min(7, speed * .012, bullet.age * speed) / speed;
+      this.bulletPositions[idx] = bullet.position.x;
+      this.bulletPositions[idx + 1] = bullet.position.y;
+      this.bulletPositions[idx + 2] = bullet.position.z;
+      this.bulletPositions[idx + 3] = bullet.position.x - bullet.velocity.x * length;
+      this.bulletPositions[idx + 4] = bullet.position.y - bullet.velocity.y * length;
+      this.bulletPositions[idx + 5] = bullet.position.z - bullet.velocity.z * length;
+      this.bulletColors[idx] = fade; this.bulletColors[idx + 1] = .95 * fade; this.bulletColors[idx + 2] = .5 * fade;
+      this.bulletColors[idx + 3] = .35 * fade; this.bulletColors[idx + 4] = .098 * fade; this.bulletColors[idx + 5] = .014 * fade;
     }
-    this.bulletGeometry.setDrawRange(0, this.bullets.length * 2);
-    this.bulletGeometry.attributes.position.needsUpdate = true;
-    this.bulletGeometry.attributes.color.needsUpdate = true;
+    this.bulletGeometry.setDrawRange(0, count * 2); this.bulletTrails.visible = count > 0;
+    if (count > 0) for (const name of ['position', 'color']) {
+      const attribute = this.bulletGeometry.getAttribute(name) as THREE.BufferAttribute;
+      attribute.clearUpdateRanges(); attribute.addUpdateRange(0, count * 6); attribute.needsUpdate = true;
+    }
+  }
+
+  private recycleBullet(index: number) {
+    this.freeBullets.push(this.bullets[index]);
+    const last = this.bullets.pop()!;
+    if (index < this.bullets.length) this.bullets[index] = last;
   }
 
   private spawnParticle(origin: THREE.Vector3, color: number, exhaust: boolean) {
@@ -1458,37 +1573,30 @@ export class NeonCityGame {
       const p = this.smokeParticles[i];
       p.life -= delta;
       if (p.life <= 0) {
-        this.smokeParticles.splice(i, 1);
+        this.freeSmokeParticles.push(p);
+        const last = this.smokeParticles.pop()!;
+        if (i < this.smokeParticles.length) this.smokeParticles[i] = last;
         continue;
       }
-      // Smoke rises and expands, slows down
-      p.velocity.y += delta * 0.5;
-      p.velocity.multiplyScalar(1 - delta * 2.5);
+      const age = p.maxLife - p.life, drag = 1 - Math.exp(-delta * 2.0);
+      p.velocity.x += (.55 + Math.sin(age * 4 + p.seed) * .35 - p.velocity.x) * drag;
+      p.velocity.z += (.2 + Math.cos(age * 3 + p.seed) * .3 - p.velocity.z) * drag;
+      p.velocity.y += (.85 + Math.sin(age * 5 + p.seed) * .2 - p.velocity.y) * drag;
       p.position.addScaledVector(p.velocity, delta);
-      p.size += delta * 1.2; // Expand as it dissipates
+      p.size += delta * .44;
     }
-    for (let i = 0; i < 300; i++) {
-      const p = this.smokeParticles[i];
-      const idx = i * 3;
-      if (p) {
-        const t = p.life / p.maxLife; // 1 = fresh, 0 = gone
-        this.smokePositions[idx] = p.position.x;
-        this.smokePositions[idx + 1] = p.position.y;
-        this.smokePositions[idx + 2] = p.position.z;
-        this.smokeSizes[i] = p.size * (1 + (1 - t) * 2);
-        this.smokeOpacities[i] = p.opacity * t * t; // Fade out quadratically
-      } else {
-        this.smokePositions[idx] = 0;
-        this.smokePositions[idx + 1] = -1000;
-        this.smokePositions[idx + 2] = 0;
-        this.smokeSizes[i] = 0;
-        this.smokeOpacities[i] = 0;
-      }
+    const count = this.smokeParticles.length;
+    for (let i = 0; i < count; i++) {
+      const p = this.smokeParticles[i], idx = i * 3, t = p.life / p.maxLife;
+      this.smokePositions[idx] = p.position.x; this.smokePositions[idx + 1] = p.position.y; this.smokePositions[idx + 2] = p.position.z;
+      this.smokeSizes[i] = p.size * (1 + (1 - t) * .65);
+      this.smokeOpacities[i] = p.opacity * Math.min(1, (1 - t) * 18 + .45) * t ** 1.6;
     }
-    this.smokeGeometry.setDrawRange(0, this.smokeParticles.length);
-    this.smokeGeometry.attributes.position.needsUpdate = true;
-    (this.smokeGeometry.attributes.particleSize as THREE.BufferAttribute).needsUpdate = true;
-    (this.smokeGeometry.attributes.particleOpacity as THREE.BufferAttribute).needsUpdate = true;
+    this.smokeGeometry.setDrawRange(0, count); this.smokeMesh.visible = count > 0;
+    if (count > 0) for (const name of ['position', 'particleSize', 'particleOpacity']) {
+      const attribute = this.smokeGeometry.getAttribute(name) as THREE.BufferAttribute;
+      attribute.clearUpdateRanges(); attribute.addUpdateRange(0, count * attribute.itemSize); attribute.needsUpdate = true;
+    }
   }
 
   private updateParticles(delta: number) {
@@ -1530,19 +1638,59 @@ export class NeonCityGame {
     const delta = this.previousTime === 0 ? 0 : Math.min(frameMs / 1000, .1);
     this.previousTime = time;
     this.elapsed += delta;
+    this.cityScreenClock.value = this.elapsed;
     this.updateRenderQuality(frameMs, delta);
     this.roadSkidMarks.updateTime(this.elapsed);
-    if (this.active && delta > 0) this.updateDriving(delta);
-    if (this.active) this.onMapPosition(this.carPosition.x, this.carPosition.z, this.yaw);
+    const occupied = this.person.mode === 'driving';
+    this.traffic.setPedestrian(occupied ? null : this.person.position);
+    if (this.active && delta > 0) {
+      if (occupied) this.updateDriving(delta);
+      else {
+        // The parked car remains anchored while city traffic continues around it.
+        this.previousPosition.copy(this.carPosition);
+        this.vehicleMotion.yaw = this.yaw;
+        this.physicsAccumulator += delta;
+        while (this.physicsAccumulator >= 1 / 120) {
+          this.traffic.step(1 / 120, this.vehicleMotion);
+          this.carPosition.copy(this.previousPosition); this.velocity.set(0, 0, 0);
+          this.vehicleMotion.yawRate = this.vehicleMotion.acceleration = 0;
+          this.physicsAccumulator -= 1 / 120;
+        }
+        this.carRig.body.rotation.x *= Math.exp(-delta * 8);
+        this.carRig.body.rotation.z *= Math.exp(-delta * 8);
+        this.carRig.body.position.y = 0;
+        this.audio.update({ speed: 0, engineLoad: 0, boosting: false, drifting: false, tireSqueal: 0, steering: 0, reversing: false });
+        this.lastTelemetry = { speed: 0, boost: this.boostCharge / 100, drifting: false, boosting: false, firing: false };
+      }
+    }
+    this.personBlockers.length = 0;
+    for (const npc of this.traffic.cars) this.personBlockers.push({ x: npc.motion.position.x, z: npc.motion.position.z, yaw: npc.motion.yaw, hx: CAR_HALF_WIDTH, hz: CAR_HALF_LENGTH });
+    this.person.cameraYaw = this.personCameraYaw;
+    this.person.update(this.active ? delta : 0, this.pressed, this.carPosition, this.yaw, this.velocity.length(), this.personBlockers);
+    this.carRig.driverDoor.rotation.y = -.96 * this.person.doorOpenAmount;
+    this.person.root.visible = this.person.ready && this.cameraView !== 'driver';
+    this.lastTelemetry.person = this.person.telemetry;
+    if (this.person.mode !== this.lastPersonMode) {
+      if (this.person.mode === 'driving' && this.cameraView === 'person') this.setCameraView(this.drivingCamera);
+      this.lastPersonMode = this.person.mode;
+      this.onTelemetry(this.lastTelemetry);
+    }
+    const focus = this.person.mode === 'driving' ? this.carPosition : this.person.position;
+    this.traffic.updateVisuals(this.active ? delta : 0, focus);
+    if (this.active) {
+      this.parkedMarker.x = this.carPosition.x; this.parkedMarker.z = this.carPosition.z; this.parkedMarker.yaw = this.yaw;
+      this.onMapPosition(focus.x, focus.z, this.person.mode === 'driving' ? this.yaw : this.person.yaw - Math.PI,
+        this.traffic.markers, this.person.mode === 'driving' ? undefined : this.parkedMarker);
+    }
     this.updateSnow(delta);
     this.updateParticles(delta);
     this.updateBullets(delta);
     this.updateSmoke(delta);
-    this.steam.update(this.elapsed, window.innerHeight * this.renderer.getPixelRatio());
+    this.steam.update(this.elapsed, window.innerHeight * this.scenePixelRatio);
     this.reflections.update(this.elapsed);
     this.island.update(this.elapsed);
-    this.updateStreetLights(this.carPosition);
-    this.updateCityVisibility(this.carPosition);
+    this.updateStreetLights(focus);
+    this.updateCityVisibility(focus, this.qualityLevel);
     this.flying.forEach(({ vehicle, phase, radius, height, speed, index }) => {
       const angle = phase + this.elapsed * speed * (index % 2 === 0 ? 1 : -1);
       vehicle.position.set(Math.cos(angle) * radius, height + Math.sin(angle * 1.6) * 2.4, Math.sin(angle) * radius);
@@ -1553,14 +1701,16 @@ export class NeonCityGame {
     this.updateCamera(delta);
     const speedRatio = Math.min(this.velocity.length() / 76, 1);
 
-    this.speedPass.uniforms.strength.value = speedRatio * (this.lastTelemetry.boosting ? .022 : .005);
-    this.speedPass.enabled = this.speedPass.uniforms.strength.value > .0006;
-    this.keyLight.position.set(this.carPosition.x + 22, this.carPosition.y + 38, this.carPosition.z + 16);
-    this.keyLight.target.position.copy(this.carPosition);
-    const shadowChanged = this.shadowPosition.distanceToSquared(this.carPosition) > .0625 || Math.abs(this.shadowYaw - this.yaw) > .025;
-    const shadowInterval = [3, 4, 6, 6][this.qualityLevel];
+    this.presentationPass.uniforms.strength.value = this.lastTelemetry.boosting ? speedRatio * .006 : 0;
+    this.presentationPass.uniforms.bloomEnabled.value = this.bloomPass.enabled ? 1 : 0;
+    this.keyLight.position.set(focus.x + 22, focus.y + 38, focus.z + 16);
+    this.keyLight.target.position.copy(focus);
+    const shadowChanged = this.shadowPosition.distanceToSquared(focus) > .0625 || Math.abs(this.shadowYaw - this.yaw) > .025 ||
+      this.person.mode !== 'driving' ||
+      this.active && this.traffic.cars.some(car => car.rig.car.visible && car.motion.velocity.lengthSq() > .01);
+    const shadowInterval = [6, 9, 12, 18, 24][this.qualityLevel];
     this.renderer.shadowMap.needsUpdate = this.renderer.shadowMap.enabled && this.shadowFrame++ % shadowInterval === 0 && shadowChanged;
-    if (this.renderer.shadowMap.needsUpdate) { this.shadowPosition.copy(this.carPosition); this.shadowYaw = this.yaw; }
+    if (this.renderer.shadowMap.needsUpdate) { this.shadowPosition.copy(focus); this.shadowYaw = this.yaw; }
     this.renderer.info.reset();
     this.composer.render();
     this.telemetryTimer += delta;
@@ -1578,6 +1728,7 @@ export class NeonCityGame {
     window.removeEventListener('keydown', this.keyDownHandler);
     window.removeEventListener('keyup', this.keyUpHandler);
     window.removeEventListener('blur', this.blurHandler);
+    document.removeEventListener('visibilitychange', this.visibilityHandler);
     const canvas = this.renderer.domElement;
     canvas.removeEventListener('pointerdown', this.pointerDownHandler);
     canvas.removeEventListener('pointermove', this.pointerMoveHandler);
@@ -1589,6 +1740,7 @@ export class NeonCityGame {
     canvas.style.touchAction = '';
     canvas.style.cursor = '';
     this.audio.dispose();
+    this.person.destroy();
     this.scene.traverse((object) => {
       if (object instanceof THREE.BatchedMesh) { object.customDepthMaterial?.dispose(); object.dispose(); }
       if (object instanceof THREE.Mesh || object instanceof THREE.Points || object instanceof THREE.LineSegments) {

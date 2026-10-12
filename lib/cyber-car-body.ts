@@ -241,25 +241,26 @@ export function createBugattiWheelGeometries() {
       if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
     });
     shape.closePath();
-    return new THREE.ExtrudeGeometry(shape, { depth: .017, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: .0025, bevelThickness: .002 });
+    return new THREE.ExtrudeGeometry(shape, { depth: .017, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: .0025, bevelThickness: .002 });
   });
   return {
     spokes,
-    barrel: new THREE.CylinderGeometry(.298, .298, .17, 40, 1, true),
-    rim: new THREE.TorusGeometry(.299, .008, 4, 40),
-    innerRim: new THREE.RingGeometry(.284, .290, 36),
+    barrel: new THREE.CylinderGeometry(.298, .298, .17, 64, 1, true),
+    rim: new THREE.TorusGeometry(.299, .008, 6, 64),
+    innerRim: new THREE.RingGeometry(.284, .290, 64),
     hub: new THREE.CylinderGeometry(.079, .090, .028, 24),
     bolt: new THREE.CylinderGeometry(.006, .006, .007, 6),
     cap: new THREE.CircleGeometry(.038, 24),
+    valve: new THREE.CylinderGeometry(.004, .005, .014, 8),
   };
 }
 
 /** Five sculpted Y-spokes, polished lips and an EB hub expose the live ceramic brake. */
-export function addBugattiWheelFace(wheel: THREE.Group, side: number, face: number, materials: { alloy: THREE.Material; carbon: THREE.Material; hub: THREE.Material }, geometries: ReturnType<typeof createBugattiWheelGeometries>) {
+export function addBugattiWheelFace(wheel: THREE.Group, side: number, face: number, materials: { alloy: THREE.Material; lip?: THREE.Material; carbon: THREE.Material; hub: THREE.Material }, geometries: ReturnType<typeof createBugattiWheelGeometries>) {
   const barrel = new THREE.Mesh(geometries.barrel, materials.carbon);
   barrel.rotation.z = Math.PI / 2; barrel.position.x = face - side * .080; wheel.add(barrel);
   for (const [geometry, offset] of [[geometries.rim, .015], [geometries.innerRim, .007]] as const) {
-    const lip = new THREE.Mesh(geometry, materials.alloy);
+    const lip = new THREE.Mesh(geometry, materials.lip ?? materials.alloy);
     lip.rotation.y = side * Math.PI / 2; lip.position.x = face + side * offset; wheel.add(lip);
   }
   for (let pair = 0; pair < 5; pair++) for (const geometry of geometries.spokes) {
@@ -277,4 +278,8 @@ export function addBugattiWheelFace(wheel: THREE.Group, side: number, face: numb
   const cap = new THREE.Mesh(geometries.cap, materials.hub);
   cap.rotation.y = side * Math.PI / 2; cap.position.x = face + side * .031;
   cap.name = 'Bugatti / EB wheel medallion'; wheel.add(cap);
+  const valve = new THREE.Mesh(geometries.valve, materials.carbon);
+  valve.rotation.z = Math.PI / 2;
+  valve.position.set(face + side * .016, Math.cos(.52) * .274, Math.sin(.52) * .274);
+  valve.name = 'Bugatti / recessed tyre inflation valve'; wheel.add(valve);
 }

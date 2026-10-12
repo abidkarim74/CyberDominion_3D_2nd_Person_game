@@ -73,21 +73,26 @@ try {
     const g = document.querySelector('canvas').__drive;
     g.qualityLevel = 0; g.qualityWarmup = -1;
     g.reflections.setQuality(0); g.renderer.shadowMap.enabled = true; g.resize();
-    const before = { pixelRatio: g.renderer.getPixelRatio(), snowCount: g.snowfall.flakes.geometry.drawRange.count };
+    const before = { pixelRatio: g.renderer.getPixelRatio(), snowCount: g.snowfall.flakes.geometry.drawRange.count,
+      shadowSize:g.keyLight.shadow.mapSize.x, reflectionWidth:g.reflections.mirror.getRenderTarget().width };
     g.active = false;
     // Simulate sustained slow frames without the expensive GPU render.
     const render = g.composer.render;
     g.composer.render = () => {};
     g.previousTime = 1;
-    for (let i = 1; i <= 240; i++) { g.frame(1 + i * 50); cancelAnimationFrame(g.animationFrame); }
+    for (let i = 1; i <= 600; i++) { g.frame(1 + i * 50); cancelAnimationFrame(g.animationFrame); }
     g.composer.render = render;
     let gpuBatches = 0, blocks = 0;
     g.scene.traverse(o => { if (o.isBatchedMesh) { gpuBatches++; blocks += o.userData.cityBatchEntries.length; } });
-    return { before, after: { pixelRatio: g.renderer.getPixelRatio(), snowCount: g.snowfall.flakes.geometry.drawRange.count }, shadows: g.renderer.shadowMap.enabled, reflection: g.reflections.mirror.visible, gpuBatches, blocks, multiDraw: !!g.renderer.getContext().getExtension('WEBGL_multi_draw') };
+    return { before, after: { pixelRatio: g.renderer.getPixelRatio(), snowCount: g.snowfall.flakes.geometry.drawRange.count,
+      shadowSize:g.keyLight.shadow.mapSize.x, reflectionWidth:g.reflections.mirror.getRenderTarget().width },
+      tier:g.qualityLevel, shadows:g.renderer.shadowMap.enabled, reflection:g.reflections.mirror.visible,
+      bloom:g.bloomPass.enabled, gpuBatches, blocks, multiDraw: !!g.renderer.getContext().getExtension('WEBGL_multi_draw') };
   });
-  assert.ok(quality.after.pixelRatio < quality.before.pixelRatio, 'Sustained slow frames reduce render cost');
+  assert.equal(quality.after.pixelRatio, quality.before.pixelRatio, 'Sustained slow frames preserve the starting render resolution');
+  assert.ok(quality.tier===4&&quality.after.shadowSize<quality.before.shadowSize&&quality.after.reflectionWidth<quality.before.reflectionWidth, 'Sustained overload reduces reflection and shadow capture cost');
   assert.equal(quality.before.snowCount, quality.after.snowCount, 'Adaptive rendering preserves weather coverage');
-  assert.ok(!quality.shadows && !quality.reflection && quality.gpuBatches > 0, 'The lowest quality removes expensive extra passes while retaining city geometry batches');
+  assert.ok(quality.shadows&&quality.reflection&&quality.bloom&&quality.gpuBatches>0, 'The lowest effects tier retains shadows, wet-road reflections, neon glow and city geometry');
   assert.deepEqual(errors, [], 'No browser runtime errors');
   const visual = await page.evaluate(() => {
     const g = document.querySelector('canvas').__drive;

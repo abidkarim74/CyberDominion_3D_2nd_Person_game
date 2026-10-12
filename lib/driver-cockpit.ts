@@ -278,14 +278,17 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
 
   // Deep door cards and curved metal pulls continue the cockpit's C-shaped trim.
   for (const side of [-1, 1]) {
-    soft(cabin, 'leather door card', [.039, .296, .882], [side * .675, .703, .006], leather, .015);
-    soft(cabin, 'carbon door insert', [.012, .117, .414], [side * .651, .763, -.095], carbon, .004);
-    soft(cabin, 'padded door armrest', [.081, .053, .351], [side * .627, .670, .067], leather, .019);
-    tube(cabin, 'curved aluminum door pull', [[side * .636, .802, -.203], [side * .622, .791, -.128], [side * .614, .697, .015], [side * .622, .654, .070]], .010, metal, 12, 4);
-    tube(cabin, 'door stitching and ambient piping', [[side * .644, .835, -.385], [side * .644, .835, -.16], [side * .642, .813, .19], [side * .642, .735, .348]], .0018, materials.cyan, 10, 3);
-    const handle = ring(cabin, 'oval metal door release', .024, .004, [side * .636, .772, -.279], metal, 16); handle.rotation.y = -side * Math.PI / 2; handle.scale.x = 1.45;
-    for (let i = 0; i < 2; i++) box(cabin, [.029, .006, .014], [side * .612, .699, -.030 + i * .025], dark);
-    box(cabin, [.035, .045, .366], [side * .661, .560, .164], dark);
+    const doorTrim = new THREE.Group();
+    doorTrim.name = side < 0 ? 'Bugatti cabin / driver door trim' : 'Bugatti cabin / passenger door trim';
+    cabin.add(doorTrim);
+    soft(doorTrim, 'leather door card', [.039, .296, .882], [side * .675, .703, .006], leather, .015);
+    soft(doorTrim, 'carbon door insert', [.012, .117, .414], [side * .651, .763, -.095], carbon, .004);
+    soft(doorTrim, 'padded door armrest', [.081, .053, .351], [side * .627, .670, .067], leather, .019);
+    tube(doorTrim, 'curved aluminum door pull', [[side * .636, .802, -.203], [side * .622, .791, -.128], [side * .614, .697, .015], [side * .622, .654, .070]], .010, metal, 12, 4);
+    tube(doorTrim, 'door stitching and ambient piping', [[side * .644, .835, -.385], [side * .644, .835, -.16], [side * .642, .813, .19], [side * .642, .735, .348]], .0018, materials.cyan, 10, 3);
+    const handle = ring(doorTrim, 'oval metal door release', .024, .004, [side * .636, .772, -.279], metal, 16); handle.rotation.y = -side * Math.PI / 2; handle.scale.x = 1.45;
+    for (let i = 0; i < 2; i++) box(doorTrim, [.029, .006, .014], [side * .612, .699, -.030 + i * .025], dark);
+    box(doorTrim, [.035, .045, .366], [side * .661, .560, .164], dark);
   }
   box(cabin, [1.19, .031, 1.44], [0, .422, .033], dark);
   for (const x of [-.406, -.327, -.238]) {

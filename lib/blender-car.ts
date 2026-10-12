@@ -54,8 +54,8 @@ export function addBlenderCarBody(body: THREE.Group, materials: CarMaterials) {
       // viewed from the seat. Keep the exterior tint on its original face.
       const interiorGlass = new THREE.MeshPhysicalMaterial({
         color: 0x9eb9c6, side: THREE.BackSide, transparent: true, opacity: .15,
-        metalness: 0, roughness: .10, depthWrite: false,
-        ior: 1.52, clearcoat: 1, clearcoatRoughness: .08, envMapIntensity: .48,
+        metalness: 0, roughness: .2, specularIntensity: .5, depthWrite: false,
+        ior: 1.52, clearcoat: .2, clearcoatRoughness: .25, envMapIntensity: .48,
       });
       interiorGlass.name = 'Bugatti cabin / clear inner laminated windows';
       interiorGlass.userData.cockpitDetail = true;

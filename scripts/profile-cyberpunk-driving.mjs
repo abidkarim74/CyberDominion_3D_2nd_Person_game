@@ -59,7 +59,12 @@ try {
     for (const { vehicle } of g.flying) vehicle.visible = false;
     const hidden = [];
     g.scene.traverse(o => { if (o.isPoints && o !== g.snowfall.flakes) { hidden.push([o, o.visible]); o.visible = false; } });
-    g.speedPass.enabled = false;
+    // Speed blur now shares the final output pass; keep its color conversion active.
+    const present = g.presentationPass.render;
+    g.presentationPass.render = function(...args) {
+      this.uniforms.strength.value = 0;
+      return present.apply(this, args);
+    };
     scenarios.push(await measure('W+Shift+F / no smoke particles steam flying', ['w', 'shift', 'f']));
     hidden.forEach(([o, visible]) => o.visible = visible);
     for (const { vehicle } of g.flying) vehicle.visible = true;

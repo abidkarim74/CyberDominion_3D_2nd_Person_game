@@ -27,14 +27,18 @@ export function batchArchitecture(scene: THREE.Object3D, includeDynamic = false)
   const rootInverse = scene.matrixWorld.clone().invert();
   const buckets = new Map<string, { material: THREE.Material; geometries: THREE.BufferGeometry[]; meshes: THREE.Mesh[] }>();
   const colorMaterials = new Map<string, THREE.MeshBasicMaterial>();
+  const accentStates = new WeakMap<THREE.MeshBasicMaterial, { key: string; material: THREE.MeshBasicMaterial }>();
+  const worldBounds = new THREE.Box3();
+  const center = new THREE.Vector3();
+  const localMatrix = new THREE.Matrix4();
   scene.traverse((object) => {
     if (!(object instanceof THREE.Mesh) || object instanceof THREE.InstancedMesh || (!includeDynamic && object.userData.dynamic) || Array.isArray(object.material)) return;
     if (object.material.transparent || object.material instanceof THREE.ShaderMaterial) return;
     const m = object.material as THREE.MeshStandardMaterial;
     // Absolute-coordinate curves have their mesh origin at zero. Bounds locate their actual block.
     object.geometry.computeBoundingBox();
-    const worldBounds = object.geometry.boundingBox!.clone().applyMatrix4(object.matrixWorld);
-    const p = worldBounds.getCenter(new THREE.Vector3());
+    worldBounds.copy(object.geometry.boundingBox!).applyMatrix4(object.matrixWorld);
+    const p = worldBounds.getCenter(center);
     const heightClass = worldBounds.max.y <= 12 ? 0 : worldBounds.max.y <= 30 ? 1 : 2;
     const cellSize = heightClass < 2 ? 132 : 352;
     // Plain static accents can carry their hue in vertices and share a shader/material.
@@ -45,33 +49,42 @@ export function batchArchitecture(scene: THREE.Object3D, includeDynamic = false)
       !basic.clippingPlanes?.length && basic.blending === THREE.NormalBlending && !('defines' in basic) &&
       basic.onBeforeCompile === THREE.Material.prototype.onBeforeCompile && basic.customProgramCacheKey === THREE.Material.prototype.customProgramCacheKey;
     let material: THREE.Material = m;
-    let materialKey = [m.type, m.color?.getHex(), m.emissive?.getHex(), m.emissiveIntensity, m.metalness, m.roughness,
-      m.map?.uuid, m.emissiveMap?.uuid, m.bumpMap?.uuid, m.bumpScale, m.envMapIntensity, m.side, m.toneMapped, m.userData.noCastShadow, heightClass, Math.floor((p.x + 22) / cellSize), Math.floor((p.z + 22) / cellSize)].join('|');
+    let materialKey: string;
     if (bakeColor) {
-      const state = { ...basic.toJSON(), uuid: undefined, name: undefined, color: undefined };
-      // Include every render state even when toJSON omits its default value.
-      const renderState = [basic.opacity, basic.alphaTest, basic.alphaHash, basic.alphaToCoverage, basic.premultipliedAlpha,
-        basic.blending, basic.blendSrc, basic.blendDst, basic.blendEquation, basic.blendSrcAlpha, basic.blendDstAlpha, basic.blendEquationAlpha,
-        basic.blendColor.toArray(), basic.blendAlpha, basic.depthFunc, basic.depthTest, basic.depthWrite, basic.colorWrite, basic.fog,
-        basic.toneMapped, basic.side, basic.shadowSide, basic.polygonOffset, basic.polygonOffsetFactor, basic.polygonOffsetUnits,
-        basic.forceSinglePass, basic.dithering, basic.precision, basic.visible, basic.clipIntersection, basic.clipShadows,
-        basic.stencilWrite, basic.stencilFunc, basic.stencilRef, basic.stencilWriteMask, basic.stencilFuncMask, basic.stencilFail,
-        basic.stencilZFail, basic.stencilZPass, basic.userData.noCastShadow];
-      const colorKey = JSON.stringify([state, renderState]);
-      let shared = colorMaterials.get(colorKey);
-      if (!shared) {
-        shared = basic.clone(); shared.color.setRGB(1, 1, 1); shared.vertexColors = true;
-        colorMaterials.set(colorKey, shared);
+      let accent = accentStates.get(basic);
+      if (!accent) {
+        const state = { ...basic.toJSON(), uuid: undefined, name: undefined, color: undefined };
+        // Include every render state even when toJSON omits its default value.
+        const renderState = [basic.opacity, basic.alphaTest, basic.alphaHash, basic.alphaToCoverage, basic.premultipliedAlpha,
+          basic.blending, basic.blendSrc, basic.blendDst, basic.blendEquation, basic.blendSrcAlpha, basic.blendDstAlpha, basic.blendEquationAlpha,
+          basic.blendColor.toArray(), basic.blendAlpha, basic.depthFunc, basic.depthTest, basic.depthWrite, basic.colorWrite, basic.fog,
+          basic.toneMapped, basic.side, basic.shadowSide, basic.polygonOffset, basic.polygonOffsetFactor, basic.polygonOffsetUnits,
+          basic.forceSinglePass, basic.dithering, basic.precision, basic.visible, basic.clipIntersection, basic.clipShadows,
+          basic.stencilWrite, basic.stencilFunc, basic.stencilRef, basic.stencilWriteMask, basic.stencilFuncMask, basic.stencilFail,
+          basic.stencilZFail, basic.stencilZPass, basic.userData.noCastShadow];
+        const colorKey = JSON.stringify([state, renderState]);
+        let shared = colorMaterials.get(colorKey);
+        if (!shared) {
+          shared = basic.clone(); shared.color.setRGB(1, 1, 1); shared.vertexColors = true;
+          colorMaterials.set(colorKey, shared);
+        }
+        accent = { key: colorKey, material: shared };
+        accentStates.set(basic, accent);
       }
-      material = shared;
-      materialKey = ['Vertex-colored city accent', colorKey, heightClass, Math.floor((p.x + 22) / cellSize), Math.floor((p.z + 22) / cellSize)].join('|');
+      material = accent.material;
+      materialKey = ['Vertex-colored city accent', accent.key, heightClass, Math.floor((p.x + 22) / cellSize), Math.floor((p.z + 22) / cellSize)].join('|');
+    } else {
+      materialKey = [m.type, m.color?.getHex(), m.emissive?.getHex(), m.emissiveIntensity, m.metalness, m.roughness,
+        m.map?.uuid, m.emissiveMap?.uuid, m.bumpMap?.uuid, m.bumpScale, m.envMapIntensity, m.side, m.toneMapped, m.userData.noCastShadow, m.customProgramCacheKey(), heightClass, Math.floor((p.x + 22) / cellSize), Math.floor((p.z + 22) / cellSize)].join('|');
     }
     const signature = materialKey;
     let bucket = buckets.get(signature);
     if (!bucket) { bucket = { material, geometries: [], meshes: [] }; buckets.set(signature, bucket); }
-    const g = object.geometry.index ? object.geometry.toNonIndexed() : object.geometry.clone();
+    // Keep shared corners so the main, shadow and reflection passes reuse vertex work.
+    // A source without normals keeps the original flat-normal generation behavior.
+    const g = object.geometry.index && !object.geometry.getAttribute('normal') ? object.geometry.toNonIndexed() : object.geometry.clone();
     // Keep vertices local to their assembly so wheels and rotors still move correctly.
-    g.applyMatrix4(rootInverse.clone().multiply(object.matrixWorld));
+    g.applyMatrix4(localMatrix.multiplyMatrices(rootInverse, object.matrixWorld));
     if (!g.getAttribute('normal')) g.computeVertexNormals();
     if (!g.getAttribute('uv')) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count * 2), 2));
     if (bakeColor) {
@@ -82,6 +95,14 @@ export function batchArchitecture(scene: THREE.Object3D, includeDynamic = false)
       g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     }
     for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name) && !(bakeColor && name === 'color')) g.deleteAttribute(name);
+    // mergeGeometries requires one index convention. Sequential indices preserve
+    // nonindexed triangles exactly, without welding UV seams or hard edges.
+    if (!g.index) {
+      const count = g.getAttribute('position').count;
+      const indices = count > 65535 ? new Uint32Array(count) : new Uint16Array(count);
+      for (let i = 0; i < count; i++) indices[i] = i;
+      g.setIndex(new THREE.BufferAttribute(indices, 1));
+    }
     bucket.geometries.push(g); bucket.meshes.push(object);
   });
   const oldGeometries = new Set<THREE.BufferGeometry>();
@@ -152,9 +173,10 @@ function combineCityBatches(scene: THREE.Scene) {
   for (const meshes of groups.values()) {
     if (meshes.length < 2) continue;
     const vertices = meshes.reduce((sum, m) => sum + m.geometry.getAttribute('position').count, 0);
+    const indices = meshes.reduce((sum, m) => sum + m.geometry.index!.count, 0);
     const material = meshes[0].material as THREE.MeshBasicMaterial;
     staticBatchMaterial(material);
-    const batch = new THREE.BatchedMesh(meshes.length, vertices, 0, material);
+    const batch = new THREE.BatchedMesh(meshes.length, vertices, indices, material);
     batch.name = 'City / GPU batched architecture';
     batch.sortObjects = false;
     batch.userData.noCastShadow = meshes[0].userData.noCastShadow;
@@ -177,26 +199,57 @@ function combineCityBatches(scene: THREE.Scene) {
   }
 }
 
-/** Fog hides distant street furniture; skyline silhouettes remain visible. */
+/** Keep visible city detail stable across effect tiers and distance boundaries. */
 export function cityVisibility(scene: THREE.Scene) {
   const batches = scene.children.filter(o => o.userData.cityBounds) as THREE.Mesh[];
   const gpuBatches = scene.children.filter(o => o.userData.cityBatchEntries) as THREE.BatchedMesh[];
+  const batchVisibility = new WeakMap<THREE.Mesh, boolean>();
+  const gpuBatchStates = gpuBatches.map(batch => {
+    const entries = batch.userData.cityBatchEntries as CityBatchEntry[];
+    return { batch, entries, visibility: new Uint8Array(entries.length) };
+  });
   const instances = scene.children.filter(o => o instanceof THREE.InstancedMesh && o.userData.cityInstanceCells) as THREE.InstancedMesh[];
+  const instanceStates = instances.map(mesh => {
+    const cells = mesh.userData.cityInstanceCells as DistrictInstanceCell[];
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    return { mesh, cells, selection: new Uint8Array(cells.length), initialized: false };
+  });
   const previous = new THREE.Vector3(Infinity, Infinity, Infinity);
   let instanceCellX = Infinity; let instanceCellZ = Infinity;
-  return (position: THREE.Vector3) => {
+  // New detail enters at the original full-detail ranges. Already visible detail
+  // gets a small exit margin, so crossing a boundary does not toggle it repeatedly.
+  const streetRangeSquared = 144 ** 2; const streetExitSquared = (144 + 12) ** 2;
+  const roofRangeSquared = 430 ** 2; const roofExitSquared = (430 + 20) ** 2;
+  // Keep the tier argument for callers; effect quality does not remove city geometry.
+  return (position: THREE.Vector3, _qualityLevel = 0) => {
     const cx = Math.floor(position.x / 44); const cz = Math.floor(position.z / 44);
     if (cx !== instanceCellX || cz !== instanceCellZ) {
       instanceCellX = cx; instanceCellZ = cz;
       const focusX = cx * 44 + 22; const focusZ = cz * 44 + 22;
-      for (const mesh of instances) {
-        const target = mesh.instanceMatrix.array as Float32Array;
-        let offset = 0;
-        for (const cell of mesh.userData.cityInstanceCells as DistrictInstanceCell[]) {
+      for (const state of instanceStates) {
+        const { mesh, cells, selection } = state;
+        let changed = !state.initialized;
+        for (let i = 0; i < cells.length; i++) {
+          const cell = cells[i];
           const dx = Math.max(Math.abs(cell.x - focusX) - 13, 0); const dz = Math.max(Math.abs(cell.z - focusZ) - 13, 0);
           const distance = dx * dx + dz * dz;
-          if (distance < 144 * 144) { target.set(cell.street, offset); offset += cell.street.length; }
-          if (distance < 430 * 430) { target.set(cell.roof, offset); offset += cell.roof.length; }
+          const previousSelection = selection[i];
+          const streetRange = previousSelection & 1 ? streetExitSquared : streetRangeSquared;
+          const roofRange = previousSelection & 2 ? roofExitSquared : roofRangeSquared;
+          const selected = (cell.street.length && distance < streetRange ? 1 : 0) |
+            (cell.roof.length && distance < roofRange ? 2 : 0);
+          if (selection[i] !== selected) { selection[i] = selected; changed = true; }
+        }
+        // A grid change can select the same matrix segments. Avoid
+        // repacking and uploading the buffer when its visible contents are identical.
+        if (!changed) continue;
+        state.initialized = true;
+        const target = mesh.instanceMatrix.array as Float32Array;
+        let offset = 0;
+        for (let i = 0; i < cells.length; i++) {
+          const cell = cells[i];
+          if (selection[i] & 1) { target.set(cell.street, offset); offset += cell.street.length; }
+          if (selection[i] & 2) { target.set(cell.roof, offset); offset += cell.roof.length; }
         }
         mesh.count = offset / 16; mesh.visible = mesh.count > 0;
         mesh.instanceMatrix.clearUpdateRanges(); mesh.instanceMatrix.addUpdateRange(0, offset);
@@ -205,13 +258,21 @@ export function cityVisibility(scene: THREE.Scene) {
     }
     if (previous.distanceToSquared(position) < 4) return;
     previous.copy(position);
-    for (const batch of gpuBatches) {
-      for (const entry of batch.userData.cityBatchEntries as CityBatchEntry[]) {
+    for (const { batch, entries, visibility } of gpuBatchStates) {
+      let anyVisible = false;
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
         const { bounds, range } = entry;
+        const effectiveRange = range + (visibility[i] ? 12 : 0);
         const x = Math.max(bounds.min.x - position.x, 0, position.x - bounds.max.x);
         const z = Math.max(bounds.min.z - position.z, 0, position.z - bounds.max.z);
-        batch.setVisibleAt(entry.id, entry.skyline || x * x + z * z < range * range);
+        const visible = entry.skyline || x * x + z * z < effectiveRange * effectiveRange;
+        batch.setVisibleAt(entry.id, visible);
+        visibility[i] = visible ? 1 : 0;
+        anyVisible ||= visible;
       }
+      // Entirely out-of-range materials need no render-list or shadow/reflection work.
+      batch.visible = anyVisible;
     }
     for (const mesh of batches) {
       const bounds = mesh.userData.cityBounds as THREE.Box3;
@@ -220,27 +281,37 @@ export function cityVisibility(scene: THREE.Scene) {
       // The far skyline uses unlit facade panels and supplies the distant horizon.
       const material = mesh.material as THREE.MeshBasicMaterial;
       const skyline = material instanceof THREE.MeshBasicMaterial && material.map && bounds.max.y > 60;
-      const range = mesh.userData.detailRange as number;
+      const range = (mesh.userData.detailRange as number) + (batchVisibility.get(mesh) ? 12 : 0);
       mesh.visible = !!skyline || x * x + z * z < range * range;
+      batchVisibility.set(mesh, mesh.visible);
     }
   };
 }
 
-/** Cheap city-shaped studio environment gives the paint/glass readable reflected neon. */
+/** Soft night sky and narrow city lights keep polished surfaces readable. */
 export function cityEnvironment(renderer: THREE.WebGLRenderer) {
   const studio = new THREE.Scene(); studio.background = new THREE.Color(0x0a1224);
-  const colors = [0x657080, 0x779092, 0x6e4456, 0x9b9b95];
+  const sky = document.createElement('canvas'); sky.width = 2; sky.height = 128;
+  const context = sky.getContext('2d')!;
+  const gradient = context.createLinearGradient(0, 0, 0, sky.height);
+  gradient.addColorStop(0, '#334b64');
+  gradient.addColorStop(.5, '#233547');
+  gradient.addColorStop(1, '#0b1220');
+  context.fillStyle = gradient; context.fillRect(0, 0, sky.width, sky.height);
+  const skyTexture = new THREE.CanvasTexture(sky); skyTexture.colorSpace = THREE.SRGBColorSpace;
+  studio.add(new THREE.Mesh(new THREE.SphereGeometry(50, 32, 16),
+    new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide })));
+  const colors = [0x3b7684, 0x647483, 0x8a4c6a, 0x927454];
   for (let i = 0; i < 24; i++) {
     const a = i / 24 * Math.PI * 2;
-    const panel = new THREE.Mesh(new THREE.PlaneGeometry(2 + i % 3, 9 + i % 7),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(colors[i % 4]).multiplyScalar(i % 3 ? .55 : 1.3), side: THREE.DoubleSide }));
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry(1.2 + (i % 3) * .45, 9 + i % 7),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(colors[i % 4]).multiplyScalar(i % 3 ? .45 : .72), side: THREE.DoubleSide }));
     panel.position.set(Math.sin(a) * 14, 4, Math.cos(a) * 14); panel.lookAt(0, 4, 0); studio.add(panel);
   }
-  const overhead = new THREE.Mesh(new THREE.PlaneGeometry(10, 18), new THREE.MeshBasicMaterial({ color: 0xa7b4c3, side: THREE.DoubleSide }));
-  overhead.position.set(-3, 13, -2); overhead.lookAt(0, 0, 0); studio.add(overhead);
   const generator = new THREE.PMREMGenerator(renderer);
   const target = generator.fromScene(studio, .06, .1, 80); generator.dispose();
   studio.traverse(o => { if (o instanceof THREE.Mesh) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); } });
+  skyTexture.dispose();
   return target;
 }
 
@@ -270,14 +341,14 @@ export function addCityDetail(scene: THREE.Scene) {
     }
     if (seed % 4 === 0) {
       const screen = district.screen(seed % 3, 6.5, 9.75);
-      screen.position.set(0, 10, -11.25); screen.rotation.y = Math.PI;
+      screen.position.set(0, 10, -12.46); screen.rotation.y = Math.PI;
       group.add(screen);
-      box(group, 0, 10, -11.04, 6.85, 10.1, .3, metal);
+      box(group, 0, 10, -12.28, 6.85, 10.1, .3, metal);
     }
     // Blade advertisements face the main avenues and create a strong near/mid hierarchy.
     if ((Math.abs(x) === 0 || Math.abs(x) === 176 || Math.abs(x) === 264) && (iz % 2 === 0 || iz === 3)) {
       const screen = district.screen((iz + ix) % 4, 6, 18);
-      screen.position.set(x < 0 ? 11.3 : -11.3, iz === 3 ? 14 : 20 + seed % 9, -2);
+      screen.position.set(x < 0 ? 12.46 : -12.46, iz === 3 ? 14 : 20 + seed % 9, -2);
       screen.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2;
       group.add(screen);
     }
@@ -330,7 +401,7 @@ export function addCityDetail(scene: THREE.Scene) {
     box(scene, side * 396, .65, road, .45, .9, 17, concrete);
     box(scene, side * 396, 1.12, road, .5, .06, 17, pink);
   }
-  // Street signs stay at a steady brightness, including when the car is parked.
+  // LED displays use the city's shared clock, including while the car is parked.
 }
 
 export function wetStreetReflection(scene: THREE.Scene) {
@@ -348,7 +419,7 @@ export function wetStreetReflection(scene: THREE.Scene) {
     float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
     void main(){
       vec2 uv = vUv.xy / vUv.w;
-      float ripple = sin(vWorld.z*18.)*sin(vWorld.x*14.);
+      float ripple = sin(vWorld.z*18.+time*.7)*sin(vWorld.x*14.-time*.5);
       float grain = hash(floor(vWorld.xz*85.));
       float rippleFade = 1.-smoothstep(35.,90.,distance(cameraPosition,vWorld));
       uv += vec2(ripple*.00015, ripple*.00025)*rippleFade;
@@ -362,7 +433,7 @@ export function wetStreetReflection(scene: THREE.Scene) {
       float edge = smoothstep(5.8,8.6,min(block.x,block.y));
       float luminance = dot(reflected,vec3(.2126,.7152,.0722));
       reflected *= min(1., .65 / max(luminance,.001));
-      float strength = (.012+pow(grazing,2.)*.11)*mix(.42,1.,edge)*wetness;
+      float strength = (.022+pow(grazing,2.)*.25)*mix(.46,1.,edge)*wetness;
       gl_FragColor=vec4(reflected*vec3(.8,.85,.9),strength*(.85+grain*.15));
     }`;
   // Captures are staggered from shadow refreshes and stop entirely when the camera is parked.
@@ -379,8 +450,7 @@ export function wetStreetReflection(scene: THREE.Scene) {
   const cameraRotation = new THREE.Quaternion();
   mirror.onBeforeRender = function(renderer, scene, camera, geometry, material, group) {
     const frame = captureFrame++;
-    if (quality === 3) return;
-    const cadence = quality === 2 ? 9 : quality === 1 ? 6 : 4;
+    const cadence = [6, 9, 14, 20, 28][quality];
     if (hasCapture && frame % cadence !== 2) return;
     camera.getWorldPosition(cameraPosition); camera.getWorldQuaternion(cameraRotation);
     if (hasCapture && cameraPosition.distanceToSquared(previousPosition) < .0225 && 1 - Math.abs(cameraRotation.dot(previousRotation)) < .00004) return;
@@ -407,11 +477,13 @@ export function wetStreetReflection(scene: THREE.Scene) {
   return {
     mirror,
     update(time: number) { material.uniforms.time.value = time; },
+    invalidate() { hasCapture = false; },
     setQuality(level: number) {
-      const next = Math.max(0, Math.min(3, Math.floor(level)));
+      const next = Math.max(0, Math.min(4, Math.floor(level)));
       if (next === quality) return;
-      quality = next; mirror.visible = quality < 3; hasCapture = false;
-      mirror.getRenderTarget().setSize(quality >= 2 ? 512 : 768, quality >= 2 ? 288 : 432);
+      quality = next; mirror.visible = true; hasCapture = false;
+      const [width, height] = [[768, 432], [640, 360], [512, 288], [384, 216], [256, 144]][quality];
+      mirror.getRenderTarget().setSize(width, height);
     },
     dispose() { mirror.getRenderTarget().dispose(); },
   };

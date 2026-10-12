@@ -2,6 +2,8 @@ import type * as THREE from 'three';
 import type { SnowContact } from './snow-surface';
 
 export const MAX_SPEED_KMH = 220;
+export const NITRO_SPEED_MULTIPLIER = 1.6;
+export const MAX_NITRO_SPEED_KMH = MAX_SPEED_KMH * NITRO_SPEED_MULTIPLIER;
 const MASS = 1950, GRAVITY = 9.81, WHEELBASE = 2.86, AXLE = WHEELBASE / 2;
 const CG_HEIGHT = .52, YAW_INERTIA = 3100, CORNERING_STIFFNESS = 105_000, REAR_CORNERING_BIAS = 1.12;
 const ROAD_TIRE_GRIP_GAIN = .4;
@@ -18,6 +20,8 @@ export type VehicleInput = {
   throttle: number; steer: number; handbrake: boolean; boost: boolean;
   /** A separate pedal lets the controller hold a stop without engaging reverse. */
   brake?: number;
+  /** Fixed activation-speed target in m/s; never multiply the speed every frame. */
+  boostTargetSpeed?: number;
 };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const tireGrip = (surfaceGrip: number) => surfaceGrip * (1 + ROAD_TIRE_GRIP_GAIN * clamp((surfaceGrip - .32) / .63, 0, 1));
@@ -72,7 +76,7 @@ export function stepVehicle(motion: VehicleMotion, input: VehicleInput, contacts
   const lateralDemand = clamp(longitudinal * longitudinal * Math.abs(Math.tan(steer)) / (turningScale * Math.max(.1, Math.min(frontGrip, rearGrip)) * GRAVITY * assistedBudget), 0, .94);
   const corneringReserve = Math.sqrt(1 - lateralDemand * lateralDemand);
   let frontX = 0, rearX = 0;
-  if (!braking && input.throttle !== 0) {
+  if (!braking && input.throttle !== 0 && (input.boost || input.throttle < 0 || longitudinal < MAX_SPEED_KMH / 3.6)) {
     const drive = (input.throttle > 0 ? (input.boost ? 10.4 : 8.7) / (1 + Math.max(0, longitudinal - 14) / (input.boost ? 60 : 37)) : -3.8) * Math.abs(input.throttle) * MASS;
     // AWD shares demand by load, reserving some tire authority for steering.
     frontX = clamp(drive * frontLoad / (MASS * GRAVITY), -frontLimit * corneringReserve, frontLimit * corneringReserve);
@@ -166,9 +170,23 @@ export function stepVehicle(motion: VehicleMotion, input: VehicleInput, contacts
     velocity.x -= fx * nextLongitudinal; velocity.z -= fz * nextLongitudinal;
     if (Math.hypot(velocity.x, velocity.z) < .3) { velocity.x = 0; velocity.z = 0; motion.yawRate = 0; }
   }
+  const boostTarget = input.boost && Number.isFinite(input.boostTargetSpeed)
+    ? clamp(input.boostTargetSpeed ?? 0, 0, MAX_NITRO_SPEED_KMH / 3.6) : 0;
+  if (boostTarget > 0 && !braking && longitudinal >= 0) {
+    // A frame-rate-independent surge reaches >99% of the extra speed in .4 s.
+    // Preserve the travel direction so steering and tire slip remain continuous.
+    const current = Math.hypot(velocity.x, velocity.z);
+    const gain = Math.max(0, boostTarget - current) * (1 - Math.exp(-dt * 12));
+    if (current > .001) { velocity.x *= 1 + gain / current; velocity.z *= 1 + gain / current; }
+    else { velocity.x += fx * gain; velocity.z += fz * gain; }
+    motion.acceleration += gain / dt;
+  }
   const finalSpeed = Math.hypot(velocity.x, velocity.z);
   // A tail-out drift can point the car against its momentum; that does not select reverse gear.
-  const limit = input.throttle < 0 && !braking ? 15 : MAX_SPEED_KMH / 3.6;
+  // Keep existing momentum when nitro expires: drag and brakes slow the car
+  // naturally instead of abruptly cutting 352 km/h back to 220 in one frame.
+  const limit = input.throttle < 0 && !braking ? 15
+    : boostTarget > 0 ? MAX_NITRO_SPEED_KMH / 3.6 : Math.max(MAX_SPEED_KMH / 3.6, speed);
   if (finalSpeed > limit) { velocity.x *= limit / finalSpeed; velocity.z *= limit / finalSpeed; }
   position.x += velocity.x * dt; position.z += velocity.z * dt;
 }

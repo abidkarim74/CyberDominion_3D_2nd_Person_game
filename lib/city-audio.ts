@@ -16,7 +16,6 @@ export class CityAudio {
   private windFilter?: BiquadFilterNode;
   private windPan?: StereoPannerNode;
   private gunMaster?: GainNode;
-  private gunNoiseBuffer?: AudioBuffer;
   private minigunSource?: AudioBufferSourceNode;
   private minigunGain?: GainNode;
   private minigunFilter?: BiquadFilterNode;
@@ -24,9 +23,8 @@ export class CityAudio {
   private minigunSpinGain?: GainNode;
   private minigunActive = false;
   private minigunSpinUp = 0;
-  private minigunStartTime = 0;
-  private lastGunCrack = -Infinity;
   private gunTone?: BiquadFilterNode;
+  private output?: DynamicsCompressorNode;
   private levels = { engine: 0, snow: 0, wind: 0, city: 0, tire: 0, boost: 0 };
 
   start() {
@@ -41,7 +39,7 @@ export class CityAudio {
       const compressor = context.createDynamicsCompressor();
       compressor.threshold.value = -20; compressor.knee.value = 14; compressor.ratio.value = 8;
       compressor.attack.value = .004; compressor.release.value = .18;
-      master.connect(compressor); compressor.connect(context.destination);
+      master.connect(compressor); compressor.connect(context.destination); this.output = compressor;
 
       const engineFilter = context.createBiquadFilter(); engineFilter.type = 'lowpass'; engineFilter.frequency.value = 620;
       const engineGain = context.createGain(); engineGain.gain.value = .025;
@@ -96,71 +94,49 @@ export class CityAudio {
       const droneGain = context.createGain(); droneGain.gain.value = .008;
       droneA.connect(droneGain); droneB.connect(droneGain); droneGain.connect(master);
       this.oscillators.push(droneA, droneB);
-      // Gunfire master bus
-      const gunMasterGain = context.createGain(); gunMasterGain.gain.value = .68;
-      // Remove piercing treble from every gun layer before it enters the shared mix.
+      // Stereo weapon bus: body, crack, action chatter, and a short street reflection.
+      const gunMasterGain = context.createGain(); gunMasterGain.gain.value = .84;
       const gunTone = context.createBiquadFilter(); gunTone.type = 'lowpass';
-      gunTone.frequency.value = 1800; gunTone.Q.value = .5;
-      gunMasterGain.connect(gunTone); gunTone.connect(master); this.gunTone = gunTone;
-      this.gunMaster = gunMasterGain;
-      // Pre-generate a short noise buffer for gun crack
-      const gunNoiseLen = Math.floor(context.sampleRate * 0.08);
-      const gunNoiseBuf = context.createBuffer(1, gunNoiseLen, context.sampleRate);
-      const gunData = gunNoiseBuf.getChannelData(0);
-      for (let i = 0; i < gunNoiseLen; i++) gunData[i] = Math.random() * 2 - 1;
-      this.gunNoiseBuffer = gunNoiseBuf;
+      gunTone.frequency.value = 4200; gunTone.Q.value = .45;
+      const gunHighpass = context.createBiquadFilter(); gunHighpass.type = 'highpass'; gunHighpass.frequency.value = 65;
+      gunMasterGain.connect(gunHighpass); gunHighpass.connect(gunTone); gunTone.connect(master);
+      this.gunMaster = gunMasterGain; this.gunTone = gunTone;
+      const reflection = context.createDelay(.3); reflection.delayTime.value = .115;
+      const reflectionFilter = context.createBiquadFilter(); reflectionFilter.type = 'lowpass'; reflectionFilter.frequency.value = 1600;
+      const reflectionGain = context.createGain(); reflectionGain.gain.value = .16;
+      gunTone.connect(reflection); reflection.connect(reflectionFilter); reflectionFilter.connect(reflectionGain); reflectionGain.connect(master);
 
-      // Continuous minigun loop — layered noise burst for rapid-fire rattling
-      const minigunLen = Math.floor(context.sampleRate * 0.5);
-      const minigunBuf = context.createBuffer(1, minigunLen, context.sampleRate);
-      const mgData = minigunBuf.getChannelData(0);
-      // Generate a rapid periodic burst pattern (~40 rounds/sec)
-      const burstRate = 40;
-      const samplesPerBurst = Math.floor(context.sampleRate / burstRate);
-      for (let i = 0; i < minigunLen; i++) {
-        const phase = i % samplesPerBurst;
-        const burstEnv = phase < samplesPerBurst * 0.3 ? 1 - (phase / (samplesPerBurst * 0.3)) : 0;
-        const noise = Math.random() * 2 - 1;
-        const attack = Math.min(1, phase / (samplesPerBurst * .08));
-        mgData[i] = noise * burstEnv * attack * .65;
+      const minigunLen = context.sampleRate * 2;
+      const minigunBuf = context.createBuffer(2, minigunLen, context.sampleRate);
+      for (let channel = 0; channel < 2; channel++) {
+        const data = minigunBuf.getChannelData(channel);
+        let pink = 0;
+        for (let i = 0; i < minigunLen; i++) {
+          const time = i / context.sampleRate;
+          // Offset the second gun by half a cycle. Each delivers 48 distinct shots/s.
+          const age = ((time * 48 + channel * .5) % 1) / 48;
+          const otherAge = ((time * 48 + (1 - channel) * .5) % 1) / 48;
+          const noise = Math.random() * 2 - 1; pink = pink * .8 + noise * .2;
+          const attack = Math.min(1, age / .00035);
+          const crack = (noise * .66 + pink * .34) * Math.exp(-age / .0085) * attack;
+          const body = Math.sin(age * Math.PI * 2 * 125) * Math.exp(-age / .018) * .42;
+          const action = Math.sin(age * Math.PI * 2 * 1850) * Math.exp(-Math.abs(age - .004) / .0016) * .10;
+          const otherGun = noise * Math.exp(-otherAge / .0085) * .22 + Math.sin(otherAge * Math.PI * 2 * 140) * Math.exp(-otherAge / .018) * .12;
+          data[i] = (crack + body + action + otherGun) * .78;
+        }
       }
-      const minigunSource = context.createBufferSource();
-      minigunSource.buffer = minigunBuf;
-      minigunSource.loop = true;
-      // Bandpass for metallic rattle
-      const minigunFilter = context.createBiquadFilter();
-      minigunFilter.type = 'bandpass';
-      minigunFilter.frequency.value = 950;
-      minigunFilter.Q.value = 0.8;
-      const minigunGain = context.createGain();
-      minigunGain.gain.value = 0.001; // start near-zero, ramps up
-      minigunSource.connect(minigunFilter);
-      minigunFilter.connect(minigunGain);
-      minigunGain.connect(gunMasterGain);
-      minigunSource.start();
-      this.minigunSource = minigunSource;
-      this.minigunGain = minigunGain;
-      this.minigunFilter = minigunFilter;
-      this.nodes.push(minigunFilter, minigunGain, minigunSource);
-
-      // Barrel spin whine oscillator
-      const spinOsc = context.createOscillator();
-      spinOsc.type = 'triangle';
-      spinOsc.frequency.value = 60;
-      const spinGain = context.createGain();
-      spinGain.gain.value = 0;
-      const spinFilter = context.createBiquadFilter();
-      spinFilter.type = 'bandpass';
-      spinFilter.frequency.value = 420;
-      spinFilter.Q.value = .65;
-      spinOsc.connect(spinFilter);
-      spinFilter.connect(spinGain);
-      spinGain.connect(gunMasterGain);
-      spinOsc.start();
-      this.minigunSpinOsc = spinOsc;
-      this.minigunSpinGain = spinGain;
-      // spinOsc is started manually above, not pushed to oscillators to avoid double-start
-      this.nodes.push(spinFilter, spinGain);
+      const minigunSource = context.createBufferSource(); minigunSource.buffer = minigunBuf; minigunSource.loop = true;
+      const minigunFilter = context.createBiquadFilter(); minigunFilter.type = 'highpass'; minigunFilter.frequency.value = 75;
+      const minigunGain = context.createGain(); minigunGain.gain.value = 0;
+      minigunSource.connect(minigunFilter); minigunFilter.connect(minigunGain); minigunGain.connect(gunMasterGain);
+      minigunSource.start(); this.minigunSource = minigunSource; this.minigunGain = minigunGain; this.minigunFilter = minigunFilter;
+      const spinOsc = context.createOscillator(); spinOsc.type = 'triangle'; spinOsc.frequency.value = 65;
+      const spinGain = context.createGain(); spinGain.gain.value = 0;
+      const spinFilter = context.createBiquadFilter(); spinFilter.type = 'bandpass'; spinFilter.frequency.value = 480; spinFilter.Q.value = .7;
+      spinOsc.connect(spinFilter); spinFilter.connect(spinGain); spinGain.connect(gunMasterGain); spinOsc.start();
+      this.minigunSpinOsc = spinOsc; this.minigunSpinGain = spinGain;
+      this.nodes.push(minigunSource, minigunFilter, minigunGain, spinOsc, spinFilter, spinGain,
+        gunHighpass, reflection, reflectionFilter, reflectionGain);
 
       this.nodes.push(master, compressor, engineFilter, engineGain, harmonicGain, boostFilter, boostGain,
         tireFilter, tireGain, tireScrubFilter, tireScrubGain, snowFilter, snowGain, snowPan, windFilter, windGain, windPan,
@@ -188,65 +164,30 @@ export class CityAudio {
     this.nodes.push(source);
   }
 
-  /** Start or maintain minigun firing — call every frame while trigger is held. */
-  fireGun() {
-    const ctx = this.context;
-    if (!ctx || ctx.state !== 'running' || !this.gunMaster || !this.gunNoiseBuffer) return;
-    if (!this.minigunActive) {
-      this.minigunActive = true;
-      this.minigunSpinUp = 0;
-      this.minigunStartTime = ctx.currentTime;
-    }
-    this.minigunSpinUp = Math.min(1, (ctx.currentTime - this.minigunStartTime) / .18);
-    const t = ctx.currentTime;
-    // Continuous minigun rattle volume
-    if (this.minigunGain) {
-      this.minigunGain.gain.setTargetAtTime(.23 * this.minigunSpinUp, t, .03);
-    }
-    // Barrel spin whine ramps up
-    if (this.minigunSpinGain) {
-      this.minigunSpinGain.gain.setTargetAtTime(.025 * this.minigunSpinUp, t, 0.025);
-    }
-    if (this.minigunSpinOsc) {
-      this.minigunSpinOsc.frequency.setTargetAtTime(60 + 180 * this.minigunSpinUp, t, 0.04);
-    }
-    if (this.minigunFilter) {
-      this.minigunFilter.frequency.setTargetAtTime(750 + 350 * this.minigunSpinUp, t, 0.03);
-    }
-    // Per-shot metallic crack layered on top (reduced rate to avoid saturation)
-    if (t - this.lastGunCrack >= .065) {
-      this.lastGunCrack = t;
-      const noise = ctx.createBufferSource(); noise.buffer = this.gunNoiseBuffer;
-      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 950 + Math.random() * 350; bp.Q.value = .55;
-      const env = ctx.createGain(); env.gain.setValueAtTime(.12 * this.minigunSpinUp, t);
-      env.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-      noise.connect(bp); bp.connect(env); env.connect(this.gunMaster);
-      noise.onended = () => { noise.disconnect(); bp.disconnect(); env.disconnect(); };
-      noise.start(t); noise.stop(t + .05);
-      // Shell casing clink
-      const clink = ctx.createOscillator(); clink.type = 'sine';
-      clink.frequency.setValueAtTime(1400 + Math.random() * 400, t);
-      clink.frequency.exponentialRampToValueAtTime(700, t + 0.03);
-      const clinkEnv = ctx.createGain(); clinkEnv.gain.setValueAtTime(.012, t);
-      clinkEnv.gain.exponentialRampToValueAtTime(0.001, t + 0.025);
-      clink.connect(clinkEnv); clinkEnv.connect(this.gunMaster);
-      clink.onended = () => { clink.disconnect(); clinkEnv.disconnect(); };
-      clink.start(t); clink.stop(t + .03);
-    }
-  }
-
-  /** Stop minigun firing — call when trigger released. */
-  stopFiring() {
-    if (!this.minigunActive) return;
-    this.minigunActive = false;
+  /** Firing rate and motor pitch follow the visible rotor's simulated speed. */
+  fireGun(spin = 1) {
     const ctx = this.context;
     if (!ctx || ctx.state !== 'running') return;
-    const t = ctx.currentTime;
-    // Spin down
-    if (this.minigunGain) this.minigunGain.gain.setTargetAtTime(0, t, 0.15);
-    if (this.minigunSpinGain) this.minigunSpinGain.gain.setTargetAtTime(0, t, 0.3);
-    if (this.minigunSpinOsc) this.minigunSpinOsc.frequency.setTargetAtTime(60, t, 0.4);
-    this.minigunSpinUp = 0;
+    this.minigunActive = true; this.minigunSpinUp = Math.max(0, Math.min(1, spin));
+    const firing = this.minigunSpinUp >= .18;
+    this.minigunSource?.playbackRate.setTargetAtTime(Math.max(.18, this.minigunSpinUp), ctx.currentTime, .012);
+    this.minigunGain?.gain.setTargetAtTime(firing ? .92 * this.minigunSpinUp : 0, ctx.currentTime, .012);
+  }
+
+  updateGunSpin(spin: number) {
+    const ctx = this.context;
+    if (!ctx || ctx.state !== 'running') return;
+    this.minigunSpinOsc?.frequency.setTargetAtTime(65 + 330 * spin, ctx.currentTime, .025);
+    this.minigunSpinGain?.gain.setTargetAtTime(.045 * spin, ctx.currentTime, .025);
+  }
+
+  stopFiring() {
+    if (!this.minigunActive) return;
+    this.minigunActive = false; this.minigunSpinUp = 0;
+    const ctx = this.context;
+    if (!ctx) return;
+    this.minigunGain?.gain.setTargetAtTime(0, ctx.currentTime, .012);
+    this.updateGunSpin(0);
   }
 
   update(frame: SoundFrame) {
@@ -276,7 +217,8 @@ export class CityAudio {
 
   diagnostics() {
     return { state: this.context?.state ?? 'not-started', levels: { ...this.levels },
-      gun: { active: this.minigunActive, gain: this.gunMaster?.gain.value ?? 0, cutoff: this.gunTone?.frequency.value ?? 0 },
+      gun: { active: this.minigunActive, gain: this.gunMaster?.gain.value ?? 0, cutoff: this.gunTone?.frequency.value ?? 0, spin: this.minigunSpinUp, rattle: this.minigunGain?.gain.value ?? 0 },
+      outputReductionDb: this.output?.reduction ?? 0,
       engineFrequency: this.oscillators[0]?.frequency.value ?? 0, frame: { ...this.frame } };
   }
 

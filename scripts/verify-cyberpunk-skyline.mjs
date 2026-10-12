@@ -30,8 +30,8 @@ try {
     const glows = g.scene.children.filter(o => o.name === 'City / batched avenue glow');
     return {
       count: buildings.length, minimumHeight: Math.min(...heights), maximumHeight: Math.max(...heights),
-      low: heights.filter(h => h < 32).length, medium: heights.filter(h => h >= 32 && h < 90).length,
-      high: heights.filter(h => h >= 90).length, landmarks: buildings.filter(b => b.landmark).length,
+      low: heights.filter(h => h < 56).length, medium: heights.filter(h => h >= 56 && h < 157.5).length,
+      high: heights.filter(h => h >= 157.5).length, landmarks: buildings.filter(b => b.landmark).length,
       shapes: new Set(buildings.map(b => b.shape)).size,
       widthRange: [Math.min(...buildings.map(b => b.width)), Math.max(...buildings.map(b => b.width))],
       depthRange: [Math.min(...buildings.map(b => b.depth)), Math.max(...buildings.map(b => b.depth))],
@@ -41,7 +41,7 @@ try {
   });
   assert.equal(city.count, 289);
   assert.equal(city.shapes, 12, 'Every architecture silhouette appears in the city');
-  assert.ok(city.minimumHeight < 20 && city.maximumHeight >= 300, 'Low blocks and skyscrapers form a clear height hierarchy');
+  assert.ok(city.minimumHeight >= 31.5 && city.minimumHeight < 35 && city.maximumHeight >= 550, 'Taller blocks and skyscrapers retain a clear height hierarchy');
   assert.ok(city.low > 50 && city.medium > 50 && city.high > 50 && city.landmarks === 8, 'The skyline has varied districts and deliberate landmarks');
   assert.ok(city.widthRange[1] - city.widthRange[0] > 9 && city.depthRange[1] - city.depthRange[0] > 9, 'Footprints vary as well as height');
   assert.deepEqual(city.blocked, [], 'All lanes remain clear with the full car footprint');

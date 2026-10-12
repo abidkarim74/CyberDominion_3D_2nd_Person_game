@@ -96,7 +96,7 @@ export function addBugattiRearAero(body: THREE.Group, materials: AeroMaterials) 
   add('cambered carbon rear airfoil', solidProfile(airfoil, [-.61, 0, .61], wingPoint), materials.carbon);
   for (const side of [-1, 1]) {
     const sections = side < 0 ? [-.725, -.61] : [.61, .725];
-    add('racing red wing tip', solidProfile(airfoil, sections, wingPoint), materials.paint);
+    add('painted wing tip', solidProfile(airfoil, sections, wingPoint), materials.paint);
 
     // Tiny endplates sit on the spoiler tips, well below the coupe roofline.
     const fin: Profile = [
