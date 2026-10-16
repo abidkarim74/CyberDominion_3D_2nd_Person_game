@@ -8,7 +8,7 @@ import { addSnowTracks } from './snow-tracks';
 import { addRoadSkidMarks } from './road-skid-marks';
 import { createTireFeedback } from './tire-feedback';
 import { makeSnowContact } from './snow-surface';
-import { stepVehicle, WHEEL_CONTACTS, NITRO_SPEED_MULTIPLIER, MAX_NITRO_SPEED_KMH, type VehicleMotion } from './vehicle-dynamics';
+import { stepVehicle, WHEEL_CONTACTS, NITRO_SPEED_MULTIPLIER, MAX_NITRO_SPEED_KMH, PLAYER_STEERING_ASSIST, type VehicleMotion } from './vehicle-dynamics';
 import { addFallingSnow } from './falling-snow';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -26,6 +26,7 @@ import { addSkylineBuilding, makeSkylineStyles, planSkylineBuilding, type Facade
 import { finishNightRoad } from './night-city-surfaces';
 import { screenClock } from './city-screens';
 import { PersonController, type PersonTelemetry, type VehicleBlocker } from './person-controller';
+import { GRAPHICS_PRESETS, isGraphicsQuality, loadGraphicsPreference, recommendGraphicsQuality, saveGraphicsPreference, type GraphicsQuality, type GraphicsStatus } from './graphics-quality';
 
 export type CameraView = 'chase' | 'driver' | 'orbit' | 'person';
 
@@ -320,7 +321,10 @@ export class NeonCityGame {
   private cameraCollisionWorld!: ColliderGrid;
   private updateStreetLights!: ReturnType<typeof poolStreetLights>;
   private readonly blurHandler = () => { this.pressed.clear(); this.orbitPointers.clear(); this.cancelNitro(); this.audio.stopFiring(); for (const flash of this.muzzleFlashes) flash.visible = false; };
-  private readonly visibilityHandler = () => { if (document.hidden) this.blurHandler(); };
+  private readonly visibilityHandler = () => {
+    if (document.hidden) this.blurHandler();
+    else { this.previousTime = 0; this.qualityResumeTime = this.elapsed + 2; }
+  };
   private driftTimer = 0;
   private physicsAccumulator = 0;
   private reverseEngaged = false;
@@ -429,6 +433,12 @@ export class NeonCityGame {
   private elapsed = 0;
   private readonly cityScreenClock = screenClock(this.scene);
   private qualityLevel = 0;
+  private graphicsQuality: GraphicsQuality = 'high';
+  private recommendedGraphics: GraphicsQuality = 'high';
+  private automaticGraphics = true;
+  private measuredFps = 0;
+  private readonly onGraphicsStatus: (status: GraphicsStatus) => void;
+  private readonly configuredTextures = new Map<THREE.Texture, number>();
   private averageFrame = 16.7;
   private qualityWarmup = 8;
   private qualitySampleTime = 0;
@@ -443,13 +453,24 @@ export class NeonCityGame {
   private readonly frameHandler = (time: number) => this.frame(time);
 
   constructor(canvas: HTMLCanvasElement, onTelemetry: (telemetry: DriveTelemetry) => void, onCameraView: (view: CameraView) => void = () => {},
-    onMapPosition: (x: number, z: number, yaw: number, traffic: readonly TrafficMarker[], parked?: TrafficMarker) => void = () => {}) {
+    onMapPosition: (x: number, z: number, yaw: number, traffic: readonly TrafficMarker[], parked?: TrafficMarker) => void = () => {},
+    options: { onGraphicsStatus?: (status: GraphicsStatus) => void } = {}) {
     this.onTelemetry = onTelemetry;
     this.onCameraView = onCameraView;
     this.onMapPosition = onMapPosition;
+    this.onGraphicsStatus = options.onGraphicsStatus ?? (() => {});
     this.scene.background = new THREE.Color(0x070c19);
     this.scene.fog = new THREE.FogExp2(0x111c2d, 0.00215);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+    const context = this.renderer.getContext();
+    const gpuInfo = context.getExtension('WEBGL_debug_renderer_info');
+    const gpuName = gpuInfo ? String(context.getParameter(gpuInfo.UNMASKED_RENDERER_WEBGL)) : '';
+    const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+    this.recommendedGraphics = recommendGraphicsQuality(gpuName, navigator.hardwareConcurrency || 4, memory,
+      /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent));
+    const preference = loadGraphicsPreference(this.recommendedGraphics);
+    this.graphicsQuality = preference.preset;
+    this.automaticGraphics = preference.automatic;
     this.renderer.setPixelRatio(this.renderPixelRatio());
     this.renderer.info.autoReset = false;
     this.renderer.shadowMap.enabled = true;
@@ -527,7 +548,8 @@ export class NeonCityGame {
     this.roadSkidMarks = addRoadSkidMarks(this.scene);
     this.snowfall = addFallingSnow(this.scene, this.coveredRoads);
     this.traffic = new AiTraffic(this.scene, this.carRig, this.collisionWorld, this.roadSnow.sample);
-    this.person = new PersonController(this.scene, this.cameraCollisionWorld, (x, z) => this.roadSnow.sample(x, z).height, this.carRig.body);
+    this.person = new PersonController(this.scene, this.cameraCollisionWorld, (x, z) => this.roadSnow.sample(x, z).height,
+      this.carRig.body, this.carRig.cockpit.steeringWheel);
     this.person.resetDriving(this.carPosition, this.yaw);
     this.updateWheelContacts();
     this.updateSnow();
@@ -969,7 +991,8 @@ export class NeonCityGame {
 
   private onKeyDown(event: KeyboardEvent) {
     const key = event.key.toLowerCase();
-    if (!this.active) return;
+    if (!this.active || event.defaultPrevented || event.target instanceof Element &&
+      event.target.closest('button, input, select, textarea, a, [contenteditable="true"], dialog')) return;
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'f', 'c', 'o', 'p', 'e', 'shift', '+', '=', '-'].includes(key)) event.preventDefault();
     const firstPress = !event.repeat && !this.pressed.has(key);
     if ((key === 's' || key === 'arrowdown') && !event.repeat && !this.pressed.has('s') && !this.pressed.has('arrowdown')) {
@@ -1002,6 +1025,30 @@ export class NeonCityGame {
   }
 
   audioDiagnostics() { return this.audio.diagnostics(); }
+
+  suspendControls() { this.blurHandler(); this.resetWeapons(); }
+
+  getGraphicsStatus(): GraphicsStatus {
+    return { preset: this.graphicsQuality, recommended: this.recommendedGraphics, automatic: this.automaticGraphics,
+      fps: this.measuredFps, resolutionScale: this.scenePixelRatio };
+  }
+
+  setGraphicsQuality(preset: GraphicsQuality) {
+    if (!isGraphicsQuality(preset)) return;
+    this.graphicsQuality = preset;
+    // A deliberate selection stays exact until the player enables adaptation.
+    this.automaticGraphics = false;
+    this.qualityLevel = 0;
+    saveGraphicsPreference(preset, this.automaticGraphics);
+    this.resize();
+  }
+
+  setAutomaticGraphics(enabled: boolean) {
+    this.automaticGraphics = enabled;
+    this.qualityLevel = 0;
+    saveGraphicsPreference(this.graphicsQuality, enabled);
+    this.resize();
+  }
 
   interactVehicle() {
     if (!this.active) return false;
@@ -1060,13 +1107,14 @@ export class NeonCityGame {
 
   private setCameraView(view: CameraView) {
     this.cameraView = view;
+    this.person?.setDriverView(view === 'driver' && this.person.mode === 'driving');
     if (view === 'orbit') this.cancelNitro();
     this.orbitPointers.clear();
     this.pressed.clear();
     this.renderer.domElement.style.touchAction = view === 'orbit' || view === 'person' ? 'none' : '';
     this.renderer.domElement.style.cursor = view === 'orbit' || view === 'person' ? 'grab' : '';
     this.camera.near = view === 'driver' ? .025 : .1;
-    this.camera.fov = view === 'driver' ? 72 : view === 'orbit' ? 50 : 66;
+    this.camera.fov = view === 'driver' ? this.driverCameraFov() : view === 'orbit' ? 50 : 66;
     this.camera.updateProjectionMatrix();
     this.carRig.cockpit.refresh(this.lastTelemetry);
     this.updateCamera(0, true);
@@ -1106,7 +1154,14 @@ export class NeonCityGame {
     point.x = event.clientX; point.y = event.clientY;
   }
 
+  private driverCameraFov() {
+    // A portrait screen still needs enough horizontal view for both hands.
+    const aspect = Math.max(.2, this.camera.aspect);
+    return Math.max(72, THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(Math.PI / 6) / aspect)));
+  }
+
   private updateCamera(delta: number, snap = false) {
+    this.camera.up.copy(this.cameraUp);
     if (snap) {
       this.reflections.invalidate();
       this.shadowPosition.set(Infinity, Infinity, Infinity); this.shadowFrame = 0;
@@ -1158,12 +1213,16 @@ export class NeonCityGame {
       return;
     }
     if (driver) {
-      // Follow the seat immediately; no idle vibration or chase lag inside the cabin.
-      this.cameraOffset.copy(this.carRig.cockpit.eye).applyAxisAngle(this.cameraUp, this.yaw);
-      this.camera.position.copy(this.carPosition).add(this.cameraOffset);
-      this.cameraTarget.copy(this.camera.position).addScaledVector(this.forward, 30)
+      // Use the same suspension transform as the dashboard. A yaw-only seat
+      // leaves the cabin moving around the eye whenever the body pitches/rolls.
+      this.carRig.body.updateWorldMatrix(true, false);
+      this.camera.position.copy(this.carRig.cockpit.eye).applyMatrix4(this.carRig.body.matrixWorld);
+      this.cameraOffset.set(0, 0, -1).transformDirection(this.carRig.body.matrixWorld);
+      this.camera.up.set(0, 1, 0).transformDirection(this.carRig.body.matrixWorld);
+      this.cameraTarget.copy(this.camera.position).addScaledVector(this.cameraOffset, 30)
         .addScaledVector(this.right, -this.steerInput * speedRatio * .45);
-      this.cameraTarget.y -= .65;
+      // Include the closer steering rim and both gripping hands below the road.
+      this.cameraTarget.addScaledVector(this.camera.up, -11.0);
     } else {
       this.cameraTarget.copy(this.carPosition).addScaledVector(this.forward, 2.2);
       this.cameraTarget.y += 1.3;
@@ -1178,7 +1237,7 @@ export class NeonCityGame {
       }
     }
     this.camera.lookAt(this.cameraTarget);
-    const targetFov = (driver ? 72 : 66) + speedRatio * (driver ? 3 : 7) + (this.lastTelemetry.boosting ? (driver ? 2 : 5) : 0);
+    const targetFov = (driver ? this.driverCameraFov() : 66) + speedRatio * (driver ? 3 : 7) + (this.lastTelemetry.boosting ? (driver ? 2 : 5) : 0);
     const nextFov = snap ? targetFov : this.camera.fov + (targetFov - this.camera.fov) * (1 - Math.exp(-delta * 2.2));
     if (Math.abs(nextFov - this.camera.fov) > .0001) { this.camera.fov = nextFov; this.camera.updateProjectionMatrix(); }
   }
@@ -1194,6 +1253,7 @@ export class NeonCityGame {
     this.roadSkidMarks.resetContinuity(); this.tireFeedback.reset();
     this.car.rotation.set(0, 0, 0);
     this.carRig.body.rotation.set(0, 0, 0);
+    this.carRig.body.position.y = 0;
     this.person.resetDriving(this.carPosition, this.yaw);
     this.carRig.driverDoor.rotation.y = 0;
     this.lastPersonMode = 'driving';
@@ -1214,40 +1274,59 @@ export class NeonCityGame {
   }
 
   private renderPixelRatio() {
-    // Keep the starting image detail while adapting reflection and shadow work.
-    // A larger presentation canvas cannot recover pixels discarded by a low tier.
-    const pixelBudget = 1_000_000;
-    return Math.min(window.devicePixelRatio || 1, 1.25,
-      Math.sqrt(pixelBudget / Math.max(1, window.innerWidth * window.innerHeight)));
+    const profile = GRAPHICS_PRESETS[this.graphicsQuality];
+    const pressureScale = Math.sqrt([1, .78, .60, .46, .35][this.qualityLevel]);
+    return Math.min((window.devicePixelRatio || 1) * profile.renderScale, profile.maxPixelRatio,
+      Math.sqrt(profile.pixelBudget / Math.max(1, window.innerWidth * window.innerHeight))) * pressureScale;
+  }
+
+  private updateTextureQuality() {
+    const anisotropy = Math.min(GRAPHICS_PRESETS[this.graphicsQuality].anisotropy, this.renderer.capabilities.getMaxAnisotropy());
+    this.scene.traverse(object => {
+      if (!(object instanceof THREE.Mesh)) return;
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+        for (const key of ['map', 'normalMap', 'bumpMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'alphaMap']) {
+          const texture = (material as unknown as Record<string, unknown>)[key];
+          if (!(texture instanceof THREE.Texture) || this.configuredTextures.get(texture) === anisotropy) continue;
+          texture.anisotropy = anisotropy; texture.needsUpdate = true;
+          this.configuredTextures.set(texture, anisotropy);
+        }
+      }
+    });
   }
 
   private updateRenderQuality(frameMs: number, delta: number) {
     // Ignore shader warmup, background tabs and isolated long pauses. Measure
     // sustained frame cost so one collision or a resize cannot lower quality.
-    if (document.hidden || this.elapsed < Math.max(this.qualityWarmup, this.qualityResumeTime) || frameMs > 200 || delta <= 0) return;
-    this.qualitySampleTime += delta;
+    if (document.hidden || this.elapsed < Math.max(this.qualityWarmup, this.qualityResumeTime) || delta <= 0) return;
+    const sampleMs = Math.min(frameMs, 500);
+    this.qualitySampleTime += sampleMs / 1000;
     this.qualitySampleFrames++;
-    this.qualitySampleMs += frameMs;
+    this.qualitySampleMs += sampleMs;
     if (frameMs > 25) this.qualitySampleSlowFrames++;
-    if (this.qualitySampleTime < 4 || this.qualitySampleFrames < 60) return;
+    const severePressure = this.qualitySampleMs / this.qualitySampleFrames > 45;
+    if (this.qualitySampleTime < 4 || this.qualitySampleFrames < (severePressure ? 15 : 60)) return;
     this.averageFrame = this.qualitySampleMs / this.qualitySampleFrames;
+    this.measuredFps = Math.round(1000 / Math.max(1, this.averageFrame));
+    // Include textures from asynchronously loaded car and character models.
+    this.updateTextureQuality();
     const slowFrameRatio = this.qualitySampleSlowFrames / this.qualitySampleFrames;
     let next = this.qualityLevel;
     // A few deferred reflection captures or new shaders are not sustained overload.
     // Require two sampling windows before reducing effects, one step at a time.
     const pressure = this.averageFrame > 22 || slowFrameRatio > .18;
     this.qualityPressureTime = pressure ? this.qualityPressureTime + this.qualitySampleTime : 0;
-    if ((this.qualityPressureTime >= 8 || this.averageFrame > 45) && next < 4) {
+    if (this.automaticGraphics && (this.qualityPressureTime >= 8 || this.averageFrame > 45) && next < 4) {
       next++;
       this.qualityPressureTime = 0;
       this.qualityRecoveryTime = 0;
-    } else if (this.averageFrame < 17.8 && slowFrameRatio < .04 && next > 0) {
+    } else if (this.automaticGraphics && this.averageFrame < 17.8 && slowFrameRatio < .04 && next > 0) {
       this.qualityRecoveryTime += this.qualitySampleTime;
       if (this.qualityRecoveryTime >= 12) { next--; this.qualityRecoveryTime = 0; }
     } else this.qualityRecoveryTime = 0;
     this.qualitySampleTime = 0; this.qualitySampleFrames = 0; this.qualitySampleMs = 0;
     this.qualitySampleSlowFrames = 0;
-    if (next === this.qualityLevel) return;
+    if (next === this.qualityLevel) { this.onGraphicsStatus(this.getGraphicsStatus()); return; }
     this.qualityLevel = next;
     this.resize();
   }
@@ -1255,6 +1334,7 @@ export class NeonCityGame {
   private resize() {
     const width = Math.max(1, window.innerWidth);
     const height = Math.max(1, window.innerHeight);
+    const profile = GRAPHICS_PRESETS[this.graphicsQuality];
     this.scenePixelRatio = this.renderPixelRatio();
     this.qualityResumeTime = this.elapsed + 2;
     this.qualitySampleTime = 0; this.qualitySampleFrames = 0;
@@ -1262,7 +1342,7 @@ export class NeonCityGame {
     this.qualityPressureTime = 0; this.qualityRecoveryTime = 0;
     // Present the low-resolution scene at a modestly higher resolution so the
     // edge/detail resolve can reconstruct it before the browser stretches the canvas.
-    const presentationRatio = Math.min(window.devicePixelRatio || 1, 1.25,
+    const presentationRatio = Math.min((window.devicePixelRatio || 1) * profile.renderScale, profile.maxPixelRatio,
       Math.max(this.scenePixelRatio, Math.sqrt(650_000 / (width * height))));
     this.renderer.setPixelRatio(presentationRatio);
     // Built-in point shaders use the renderer's ratio, even inside the composer.
@@ -1273,24 +1353,33 @@ export class NeonCityGame {
     this.composer.setPixelRatio(this.scenePixelRatio);
     this.renderer.setSize(width, height, false);
     this.composer.setSize(width, height);
-    this.presentationPass.setQuality(0);
-    this.island.aurora.setQuality(0);
+    this.presentationPass.setPreset(this.graphicsQuality, this.qualityLevel);
+    this.island.aurora.setQuality(this.graphicsQuality === 'low' ? 3 : this.graphicsQuality === 'medium' ? 2 : 0);
     // Glow is built in five small draws and added in the existing output draw.
     // Its appearance stays consistent instead of switching off while driving.
     this.bloomPass.enabled = true;
+    this.bloomPass.strength = profile.bloomStrength;
+    this.bloomPass.radius = this.graphicsQuality === 'ultra' ? .42 : .48;
+    this.bloomPass.setQuality(profile.bloomResolution);
     this.presentationPass.uniforms.bloomEnabled.value = 1;
     this.bloomPass.setSize(width * this.scenePixelRatio, height * this.scenePixelRatio);
-    this.reflections.setQuality(this.qualityLevel);
+    this.reflections.setPreset(this.graphicsQuality, this.qualityLevel);
     this.reflections.invalidate();
     // Retain shadows at every tier; reduce their capture size and refresh rate.
     this.renderer.shadowMap.enabled = true;
-    const shadowSize = [1024, 768, 512, 512, 384][this.qualityLevel];
+    const shadowSize = Math.max(256, Math.round(profile.shadowSize / (1 + this.qualityLevel * .3)));
     if (this.keyLight.shadow.mapSize.x !== shadowSize) {
       this.keyLight.shadow.mapSize.set(shadowSize, shadowSize);
       this.keyLight.shadow.map?.dispose(); this.keyLight.shadow.map = null;
     }
     this.shadowPosition.set(Infinity, Infinity, Infinity); this.shadowFrame = 0;
     this.renderer.shadowMap.needsUpdate = true;
+    this.keyLight.shadow.radius = this.graphicsQuality === 'ultra' ? 1.8 : 1;
+    this.snowfall.setDensity(profile.snowDensity);
+    this.updateStreetLights(this.carPosition, profile.streetLights);
+    this.updateCityVisibility(this.carPosition, this.qualityLevel, profile.detailScale);
+    this.updateTextureQuality();
+    this.onGraphicsStatus(this.getGraphicsStatus());
   }
 
   private updateDriving(delta: number) {
@@ -1308,7 +1397,7 @@ export class NeonCityGame {
     this.vehicleMotion.yaw = this.yaw;
     const step = 1 / 120;
     this.physicsAccumulator += delta;
-    const input = { throttle, brake, steer, handbrake: drifting, boost: boosting, boostTargetSpeed: this.nitroTargetSpeed };
+    const input = { throttle, brake, steer, steeringAssist: PLAYER_STEERING_ASSIST, handbrake: drifting, boost: boosting, boostTargetSpeed: this.nitroTargetSpeed };
     let trafficImpact = 0;
     while (this.physicsAccumulator + 1e-9 >= step) {
       input.boost = this.nitroRemaining > 0 && this.boostCharge > 0;
@@ -1355,8 +1444,16 @@ export class NeonCityGame {
     }
     this.updateWheelContacts();
     const supportHeight = this.wheelContacts.reduce((sum, c) => sum + c.height, 0) / 4 + .006;
-    this.suspensionVelocity += ((supportHeight - this.carPosition.y) * 45 - this.suspensionVelocity * 12) * delta;
-    this.carPosition.y += this.suspensionVelocity * delta;
+    // Exact critically damped spring: long render frames cannot make a parked
+    // car oscillate. Preserve travel over uneven ground and settle to a true rest.
+    const suspensionOffset = this.carPosition.y - supportHeight;
+    const suspensionRate = this.suspensionVelocity + 8 * suspensionOffset;
+    const suspensionDecay = Math.exp(-8 * delta);
+    this.carPosition.y = supportHeight + (suspensionOffset + suspensionRate * delta) * suspensionDecay;
+    this.suspensionVelocity = (this.suspensionVelocity - 8 * suspensionRate * delta) * suspensionDecay;
+    if (Math.abs(this.carPosition.y - supportHeight) < .00001 && Math.abs(this.suspensionVelocity) < .00001) {
+      this.carPosition.y = supportHeight; this.suspensionVelocity = 0;
+    }
     this.car.position.copy(this.carPosition);
     this.car.rotation.y = this.yaw;
     for (let i = 0; i < this.wheelMeshes.length; i++) {
@@ -1383,11 +1480,11 @@ export class NeonCityGame {
     const targetRoll = THREE.MathUtils.clamp(groundRoll - this.vehicleMotion.yawRate * this.velocity.length() / 9.81 * .055, -.2, .2);
     this.carRig.body.rotation.z = THREE.MathUtils.lerp(this.carRig.body.rotation.z, targetRoll, suspensionEase);
 
-    // Engine idle vibration + high-speed road texture feedback + weapon recoil shudder
-    const idleThrum = this.velocity.length() < 1 ? Math.sin(this.elapsed * 26) * 0.0018 : 0;
-    const roadRumble = Math.sin(this.elapsed * 44) * speedRatio * 0.0035;
+    // Road feedback fades out before stopping; only actual weapon recoil moves
+    // the body while stationary. Engine idle is carried by audio.
+    const roadRumble = Math.sin(this.elapsed * 44) * speedRatio * .0035 * THREE.MathUtils.smoothstep(this.velocity.length(), .3, 3);
     const recoilShudder = (this.carRig.miniguns.recoil[0] + this.carRig.miniguns.recoil[1]) * -.14;
-    this.carRig.body.position.y = idleThrum + roadRumble + recoilShudder;
+    this.carRig.body.position.y = roadRumble + recoilShudder;
 
     // Dynamic brake disc thermal heating & dissipation (glowing red-hot carbon rotors)
     if (braking && speedRatio > .05) {
@@ -1410,7 +1507,7 @@ export class NeonCityGame {
     for (const brakeLight of this.brakeLights) {
       (brakeLight.material as THREE.MeshStandardMaterial).emissiveIntensity = brakeIntensity;
     }
-    const engineIntensity = boosting ? 2.2 : .3;
+    const engineIntensity = boosting ? 2.2 : .025;
     for (const exhaust of this.exhaustMeshes) {
       (exhaust.material as THREE.MeshStandardMaterial).emissiveIntensity = engineIntensity;
     }
@@ -1666,9 +1763,12 @@ export class NeonCityGame {
     this.personBlockers.length = 0;
     for (const npc of this.traffic.cars) this.personBlockers.push({ x: npc.motion.position.x, z: npc.motion.position.z, yaw: npc.motion.yaw, hx: CAR_HALF_WIDTH, hz: CAR_HALF_LENGTH });
     this.person.cameraYaw = this.personCameraYaw;
+    // The driver's grip uses the wheel's current transform, including steering.
+    this.carRig.cockpit.update(delta, this.lastTelemetry, this.steerInput, this.cameraView === 'driver');
     this.person.update(this.active ? delta : 0, this.pressed, this.carPosition, this.yaw, this.velocity.length(), this.personBlockers);
     this.carRig.driverDoor.rotation.y = -.96 * this.person.doorOpenAmount;
-    this.person.root.visible = this.person.ready && this.cameraView !== 'driver';
+    this.person.root.visible = this.person.ready;
+    this.person.setDriverView(this.cameraView === 'driver' && this.person.mode === 'driving');
     this.lastTelemetry.person = this.person.telemetry;
     if (this.person.mode !== this.lastPersonMode) {
       if (this.person.mode === 'driving' && this.cameraView === 'person') this.setCameraView(this.drivingCamera);
@@ -1689,15 +1789,15 @@ export class NeonCityGame {
     this.steam.update(this.elapsed, window.innerHeight * this.scenePixelRatio);
     this.reflections.update(this.elapsed);
     this.island.update(this.elapsed);
-    this.updateStreetLights(focus);
-    this.updateCityVisibility(focus, this.qualityLevel);
+    const graphicsProfile = GRAPHICS_PRESETS[this.graphicsQuality];
+    this.updateStreetLights(focus, graphicsProfile.streetLights);
+    this.updateCityVisibility(focus, this.qualityLevel, graphicsProfile.detailScale);
     this.flying.forEach(({ vehicle, phase, radius, height, speed, index }) => {
       const angle = phase + this.elapsed * speed * (index % 2 === 0 ? 1 : -1);
       vehicle.position.set(Math.cos(angle) * radius, height + Math.sin(angle * 1.6) * 2.4, Math.sin(angle) * radius);
       vehicle.rotation.y = -angle + Math.PI / 2;
     });
 
-    this.carRig.cockpit.update(delta, this.lastTelemetry, this.steerInput, this.cameraView === 'driver');
     this.updateCamera(delta);
     const speedRatio = Math.min(this.velocity.length() / 76, 1);
 
@@ -1708,7 +1808,7 @@ export class NeonCityGame {
     const shadowChanged = this.shadowPosition.distanceToSquared(focus) > .0625 || Math.abs(this.shadowYaw - this.yaw) > .025 ||
       this.person.mode !== 'driving' ||
       this.active && this.traffic.cars.some(car => car.rig.car.visible && car.motion.velocity.lengthSq() > .01);
-    const shadowInterval = [6, 9, 12, 18, 24][this.qualityLevel];
+    const shadowInterval = graphicsProfile.shadowInterval + this.qualityLevel * 3;
     this.renderer.shadowMap.needsUpdate = this.renderer.shadowMap.enabled && this.shadowFrame++ % shadowInterval === 0 && shadowChanged;
     if (this.renderer.shadowMap.needsUpdate) { this.shadowPosition.copy(focus); this.shadowYaw = this.yaw; }
     this.renderer.info.reset();
@@ -1750,6 +1850,7 @@ export class NeonCityGame {
         for (const material of materials) {
           if ('map' in material && material.map instanceof THREE.Texture) material.map.dispose();
           if ('bumpMap' in material && material.bumpMap instanceof THREE.Texture) material.bumpMap.dispose();
+          if ('roughnessMap' in material && material.roughnessMap instanceof THREE.Texture) material.roughnessMap.dispose();
           if ('alphaMap' in material && material.alphaMap instanceof THREE.Texture) material.alphaMap.dispose();
           if ('emissiveMap' in material && material.emissiveMap instanceof THREE.Texture) material.emissiveMap.dispose();
           material.dispose();
@@ -1764,5 +1865,6 @@ export class NeonCityGame {
     for (const pass of this.composer.passes) pass.dispose();
     this.composer.dispose();
     this.renderer.dispose();
+    this.configuredTextures.clear();
   }
 }

@@ -4,6 +4,7 @@ import type { SnowContact } from './snow-surface';
 export const MAX_SPEED_KMH = 220;
 export const NITRO_SPEED_MULTIPLIER = 1.6;
 export const MAX_NITRO_SPEED_KMH = MAX_SPEED_KMH * NITRO_SPEED_MULTIPLIER;
+export const PLAYER_STEERING_ASSIST = 1.45;
 const MASS = 1950, GRAVITY = 9.81, WHEELBASE = 2.86, AXLE = WHEELBASE / 2;
 const CG_HEIGHT = .52, YAW_INERTIA = 3100, CORNERING_STIFFNESS = 105_000, REAR_CORNERING_BIAS = 1.12;
 const ROAD_TIRE_GRIP_GAIN = .4;
@@ -20,6 +21,8 @@ export type VehicleInput = {
   throttle: number; steer: number; handbrake: boolean; boost: boolean;
   /** A separate pedal lets the controller hold a stop without engaging reverse. */
   brake?: number;
+  /** Road turn-rate multiplier for player controls; traffic keeps its calibrated default. */
+  steeringAssist?: number;
   /** Fixed activation-speed target in m/s; never multiply the speed every frame. */
   boostTargetSpeed?: number;
 };
@@ -49,10 +52,13 @@ export function stepVehicle(motion: VehicleMotion, input: VehicleInput, contacts
   // deflection. A purely geometric limit made the car understeer at road speed.
   const pedal = clamp(input.brake ?? (input.throttle < 0 && longitudinal > .15 || input.throttle > 0 && longitudinal < -.15 ? 1 : 0), 0, 1);
   const roadGrip = clamp((Math.min(frontSurfaceGrip, rearSurfaceGrip) - .32) / .63, 0, 1);
-  // Keyboard road steering needs useful authority at speed instead of a turn
-  // radius that grows with speed squared. Keep that authority while braking
-  // into a corner; the handbrake keeps its separate drift response.
-  const roadSteeringGain = !input.handbrake ? 1 + 1.3 * roadGrip * clamp((Math.abs(longitudinal) - 8) / 35, 0, 1) : 1;
+  // Keep useful road turn authority as speed rises, including while braking.
+  // Fade the player gain in above parking speed. Apply it to the available
+  // turn radius and braking budget together, keeping tight brake turns stable.
+  const playerSteeringAssist = clamp(input.steeringAssist ?? 1, 1, 2);
+  const assistedForward = playerSteeringAssist > 1 && longitudinal > 0;
+  const playerSteeringGain = 1 + (playerSteeringAssist - 1) * roadGrip * clamp((longitudinal - 6) / 16, 0, 1);
+  const roadSteeringGain = !input.handbrake ? (1 + 1.3 * roadGrip * clamp((Math.abs(longitudinal) - 8) / 35, 0, 1)) * playerSteeringGain : 1;
   const tireCompliance = MASS * .5 / (CORNERING_STIFFNESS * clamp((frontGrip + rearGrip) / (2 * .95), .25, 1.4)) * (1 - 1 / REAR_CORNERING_BIAS);
   const turningScale = WHEELBASE + longitudinal * longitudinal * tireCompliance * (pedal > 0 ? roadGrip : 1);
   // Add road-speed authority progressively so sustained low-speed turns stay planted.
@@ -102,6 +108,10 @@ export function stepVehicle(motion: VehicleMotion, input: VehicleInput, contacts
   }
   const frontSlip = Math.atan2(frontWheelY, Math.max(2, Math.abs(frontWheelX)));
   const rearSlip = Math.atan2(rearLateral, Math.max(2, Math.abs(longitudinal)));
+  // At full wheel lock, rear contact motion includes the normal cornering arc.
+  // Player stability should fade for a sideways body slide, not that rolling arc.
+  const stabilitySlip = assistedForward
+    ? Math.atan2(lateral, Math.max(2, Math.abs(longitudinal))) : rearSlip;
   const frontBudget = Math.sqrt(Math.max(0, frontLimit * frontLimit - frontX * frontX));
   const rearBudget = Math.sqrt(Math.max(0, rearLimit * rearLimit - rearX * rearX));
   // Cornering stiffness follows axle load. Keeping the unloaded rear just as
@@ -134,7 +144,7 @@ export function stepVehicle(motion: VehicleMotion, input: VehicleInput, contacts
   // both axles to build yaw. Tire forces still steer the momentum; snow, rear
   // slides and the handbrake retain the rigid-body response.
   if (!input.handbrake && speed > 2) {
-    const rearRolling = clamp(1 - Math.abs(rearSlip) / .35, 0, 1);
+    const rearRolling = clamp(1 - Math.abs(stabilitySlip) / .35, 0, 1);
     // Keyboard corrections need to build yaw within the same short input, even
     // under throttle and settle promptly after release. Service-brake turns
     // keep a quick rolling response while reserving grip for deceleration.
@@ -152,10 +162,13 @@ export function stepVehicle(motion: VehicleMotion, input: VehicleInput, contacts
     // Redirect momentum as well as the body. Rotate velocity without changing
     // its magnitude, keeping short steering taps immediate and energy-neutral.
     // Fade out for a sliding rear axle so an actual drift still needs recovery.
-    const rolling = clamp(1 - Math.abs(rearSlip) / .35, 0, 1);
+    const rolling = clamp(1 - Math.abs(stabilitySlip) / .35, 0, 1);
     const travelYaw = longitudinal >= 0 ? Math.atan2(-velocity.x, -velocity.z) : Math.atan2(velocity.x, velocity.z);
     const error = Math.atan2(Math.sin(motion.yaw - travelYaw), Math.cos(motion.yaw - travelYaw));
-    const correction = error * (1 - Math.exp(-dt * 64 * roadGrip * rolling * clamp((speed - (pedal > 0 ? 2 : 4)) / (pedal > 0 ? 4 : 6), 0, 1)));
+    // Keep an assisted corner planted as coasting brings it down to low speed.
+    const alignSlowTurn = pedal > 0 || assistedForward;
+    const alignmentRange = assistedForward ? 2 : pedal > 0 ? 4 : 6;
+    const correction = error * (1 - Math.exp(-dt * 64 * roadGrip * rolling * clamp((speed - (alignSlowTurn ? 2 : 4)) / alignmentRange, 0, 1)));
     const c = Math.cos(correction), s = Math.sin(correction), vx = velocity.x;
     velocity.x = vx * c + velocity.z * s;
     velocity.z = -vx * s + velocity.z * c;

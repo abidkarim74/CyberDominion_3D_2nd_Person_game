@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { addCyberpunkDistrict, type DistrictInstanceCell } from './cyberpunk-district';
+import { GRAPHICS_PRESETS, type GraphicsQuality } from './graphics-quality';
 
 const CYAN = 0x35cde8;
 const PINK = 0xff347f;
@@ -199,7 +200,7 @@ function combineCityBatches(scene: THREE.Scene) {
   }
 }
 
-/** Keep visible city detail stable across effect tiers and distance boundaries. */
+/** Scale distant decorative detail while retaining the skyline and stable range boundaries. */
 export function cityVisibility(scene: THREE.Scene) {
   const batches = scene.children.filter(o => o.userData.cityBounds) as THREE.Mesh[];
   const gpuBatches = scene.children.filter(o => o.userData.cityBatchEntries) as THREE.BatchedMesh[];
@@ -216,14 +217,18 @@ export function cityVisibility(scene: THREE.Scene) {
   });
   const previous = new THREE.Vector3(Infinity, Infinity, Infinity);
   let instanceCellX = Infinity; let instanceCellZ = Infinity;
-  // New detail enters at the original full-detail ranges. Already visible detail
-  // gets a small exit margin, so crossing a boundary does not toggle it repeatedly.
-  const streetRangeSquared = 144 ** 2; const streetExitSquared = (144 + 12) ** 2;
-  const roofRangeSquared = 430 ** 2; const roofExitSquared = (430 + 20) ** 2;
-  // Keep the tier argument for callers; effect quality does not remove city geometry.
-  return (position: THREE.Vector3, _qualityLevel = 0) => {
+  let previousDetailScale = NaN;
+  // Already visible detail gets a small exit margin, so crossing a boundary
+  // does not toggle it repeatedly, even when presets change the base distance.
+  // The legacy quality argument remains accepted; scenery distance is an explicit preset choice.
+  return (position: THREE.Vector3, _qualityLevel = 0, detailScale = 1) => {
+    const scale = Number.isFinite(detailScale) ? THREE.MathUtils.clamp(detailScale, .65, 1.7) : 1;
+    const scaleChanged = scale !== previousDetailScale;
+    previousDetailScale = scale;
+    const streetRangeSquared = (144 * scale) ** 2; const streetExitSquared = (144 * scale + 12) ** 2;
+    const roofRangeSquared = (430 * scale) ** 2; const roofExitSquared = (430 * scale + 20) ** 2;
     const cx = Math.floor(position.x / 44); const cz = Math.floor(position.z / 44);
-    if (cx !== instanceCellX || cz !== instanceCellZ) {
+    if (scaleChanged || cx !== instanceCellX || cz !== instanceCellZ) {
       instanceCellX = cx; instanceCellZ = cz;
       const focusX = cx * 44 + 22; const focusZ = cz * 44 + 22;
       for (const state of instanceStates) {
@@ -256,14 +261,14 @@ export function cityVisibility(scene: THREE.Scene) {
         mesh.instanceMatrix.needsUpdate = true;
       }
     }
-    if (previous.distanceToSquared(position) < 4) return;
+    if (!scaleChanged && previous.distanceToSquared(position) < 4) return;
     previous.copy(position);
     for (const { batch, entries, visibility } of gpuBatchStates) {
       let anyVisible = false;
       for (let i = 0; i < entries.length; i++) {
         const entry = entries[i];
         const { bounds, range } = entry;
-        const effectiveRange = range + (visibility[i] ? 12 : 0);
+        const effectiveRange = range * scale + (visibility[i] ? 12 : 0);
         const x = Math.max(bounds.min.x - position.x, 0, position.x - bounds.max.x);
         const z = Math.max(bounds.min.z - position.z, 0, position.z - bounds.max.z);
         const visible = entry.skyline || x * x + z * z < effectiveRange * effectiveRange;
@@ -281,7 +286,7 @@ export function cityVisibility(scene: THREE.Scene) {
       // The far skyline uses unlit facade panels and supplies the distant horizon.
       const material = mesh.material as THREE.MeshBasicMaterial;
       const skyline = material instanceof THREE.MeshBasicMaterial && material.map && bounds.max.y > 60;
-      const range = (mesh.userData.detailRange as number) + (batchVisibility.get(mesh) ? 12 : 0);
+      const range = (mesh.userData.detailRange as number) * scale + (batchVisibility.get(mesh) ? 12 : 0);
       mesh.visible = !!skyline || x * x + z * z < range * range;
       batchVisibility.set(mesh, mesh.visible);
     }
@@ -410,11 +415,12 @@ export function wetStreetReflection(scene: THREE.Scene) {
   const material = mirror.material as THREE.ShaderMaterial;
   material.transparent = true; material.depthWrite = false;
   material.uniforms.time = { value: 0 };
+  material.uniforms.reflectionSpread = { value: new THREE.Vector2(.001, .002) };
   material.vertexShader = `uniform mat4 textureMatrix;
     varying vec4 vUv; varying vec3 vWorld;
     void main() { vUv = textureMatrix * vec4(position,1.); vWorld = (modelMatrix * vec4(position,1.)).xyz;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }`;
-  material.fragmentShader = `uniform sampler2D tDiffuse; uniform float time;
+  material.fragmentShader = `uniform sampler2D tDiffuse; uniform float time; uniform vec2 reflectionSpread;
     varying vec4 vUv; varying vec3 vWorld;
     float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
     void main(){
@@ -424,8 +430,8 @@ export function wetStreetReflection(scene: THREE.Scene) {
       float rippleFade = 1.-smoothstep(35.,90.,distance(cameraPosition,vWorld));
       uv += vec2(ripple*.00015, ripple*.00025)*rippleFade;
       vec3 reflected = texture2D(tDiffuse,uv).rgb*.42;
-      reflected += texture2D(tDiffuse,uv+vec2(.001,.002)).rgb*.29;
-      reflected += texture2D(tDiffuse,uv-vec2(.001,.002)).rgb*.29;
+      reflected += texture2D(tDiffuse,uv+reflectionSpread).rgb*.29;
+      reflected += texture2D(tDiffuse,uv-reflectionSpread).rgb*.29;
       float grazing = 1.-clamp(normalize(cameraPosition-vWorld).y,0.,1.);
       float wetness = .5+.5*smoothstep(.2,.8,sin(vWorld.x*.73+sin(vWorld.z*.36)));
       // Asphalt stays visible: stronger wet patches beside the kerbs, weaker in the lanes.
@@ -436,10 +442,16 @@ export function wetStreetReflection(scene: THREE.Scene) {
       float strength = (.022+pow(grazing,2.)*.25)*mix(.46,1.,edge)*wetness;
       gl_FragColor=vec4(reflected*vec3(.8,.85,.9),strength*(.85+grain*.15));
     }`;
-  // Captures are staggered from shadow refreshes and stop entirely when the camera is parked.
+  // Captures follow the chosen budget, with occasional parked updates for animated city lights.
   const capture = mirror.onBeforeRender.bind(mirror);
   let captureFrame = 0;
   let quality = 0;
+  let presetKey = '';
+  let captureCadence = 6;
+  let parkedCadence = 48;
+  let movementThreshold = .0225;
+  let rotationThreshold = .00004;
+  let lastCaptureFrame = -Infinity;
   let hasCapture = false;
   let collected = false;
   const excluded: THREE.Object3D[] = [];
@@ -450,10 +462,9 @@ export function wetStreetReflection(scene: THREE.Scene) {
   const cameraRotation = new THREE.Quaternion();
   mirror.onBeforeRender = function(renderer, scene, camera, geometry, material, group) {
     const frame = captureFrame++;
-    const cadence = [6, 9, 14, 20, 28][quality];
-    if (hasCapture && frame % cadence !== 2) return;
+    if (hasCapture && frame % captureCadence !== 2 % captureCadence) return;
     camera.getWorldPosition(cameraPosition); camera.getWorldQuaternion(cameraRotation);
-    if (hasCapture && cameraPosition.distanceToSquared(previousPosition) < .0225 && 1 - Math.abs(cameraRotation.dot(previousRotation)) < .00004) return;
+    if (hasCapture && frame - lastCaptureFrame < parkedCadence && cameraPosition.distanceToSquared(previousPosition) < movementThreshold && 1 - Math.abs(cameraRotation.dot(previousRotation)) < rotationThreshold) return;
     if (!collected) {
       // The first render happens after weather and the car are installed. Keep references thereafter.
       scene.traverse(object => {
@@ -467,7 +478,7 @@ export function wetStreetReflection(scene: THREE.Scene) {
     renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = false;
     try {
       capture(renderer, scene, camera, geometry, material, group);
-      previousPosition.copy(cameraPosition); previousRotation.copy(cameraRotation); hasCapture = true;
+      previousPosition.copy(cameraPosition); previousRotation.copy(cameraRotation); hasCapture = true; lastCaptureFrame = frame;
     } finally {
       for (let i = 0; i < excluded.length; i++) excluded[i].visible = visibility[i];
       renderer.shadowMap.autoUpdate = shadowAutoUpdate; renderer.shadowMap.needsUpdate = shadowNeedsUpdate;
@@ -478,10 +489,31 @@ export function wetStreetReflection(scene: THREE.Scene) {
     mirror,
     update(time: number) { material.uniforms.time.value = time; },
     invalidate() { hasCapture = false; },
+    setPreset(preset: GraphicsQuality, pressure = 0) {
+      const load = Number.isFinite(pressure) ? THREE.MathUtils.clamp(Math.floor(pressure), 0, 4) : 0;
+      const key = `${preset}:${load}`;
+      if (key === presetKey) return;
+      presetKey = key;
+      const profile = GRAPHICS_PRESETS[preset];
+      // Pressure trims work within the selected tier; Ultra keeps a larger capture than High.
+      const size = Math.max(128, Math.round(profile.reflectionSize * (1 - load * .1) / 64) * 64);
+      captureCadence = Math.max(1, Math.round(profile.reflectionCadence * (1 + load * .45)));
+      parkedCadence = Math.max(captureCadence, (preset === 'ultra' ? 8 : preset === 'high' ? 24 : 72) * (1 + load));
+      movementThreshold = preset === 'ultra' ? .0001 : preset === 'high' ? .0025 : .0225;
+      rotationThreshold = preset === 'ultra' ? .0000005 : .00004;
+      const spread = preset === 'ultra' ? .45 : preset === 'high' ? .65 : 1;
+      material.uniforms.reflectionSpread.value.set(spread / size, spread * 1.5 / size);
+      mirror.getRenderTarget().setSize(size, size);
+      mirror.visible = true; hasCapture = false;
+    },
     setQuality(level: number) {
       const next = Math.max(0, Math.min(4, Math.floor(level)));
-      if (next === quality) return;
+      if (next === quality && !presetKey) return;
+      presetKey = '';
       quality = next; mirror.visible = true; hasCapture = false;
+      captureCadence = [6, 9, 14, 20, 28][quality]; parkedCadence = captureCadence * 8;
+      movementThreshold = .0225; rotationThreshold = .00004;
+      material.uniforms.reflectionSpread.value.set(.001, .002);
       const [width, height] = [[768, 432], [640, 360], [512, 288], [384, 216], [256, 144]][quality];
       mirror.getRenderTarget().setSize(width, height);
     },
@@ -489,7 +521,7 @@ export function wetStreetReflection(scene: THREE.Scene) {
   };
 }
 
-/** Select four local practical lights; the shader never pays for the whole city's lamps. */
+/** Select a preset's local practical lights without rendering every lamp in the city. */
 export function poolStreetLights(scene: THREE.Scene) {
   const sources: { position: THREE.Vector3; color: THREE.Color; intensity: number; distance: number; decay: number }[] = [];
   const remove: THREE.PointLight[] = [];
@@ -498,22 +530,28 @@ export function poolStreetLights(scene: THREE.Scene) {
     sources.push({ position: o.getWorldPosition(new THREE.Vector3()), color: o.color.clone(), intensity: o.intensity, distance: o.distance, decay: o.decay }); remove.push(o);
   } });
   remove.forEach(l => l.removeFromParent());
-  const pool = Array.from({ length: 4 }, () => { const light = new THREE.PointLight(); scene.add(light); return light; });
+  const pool = Array.from({ length: 8 }, (_, index) => {
+    const light = new THREE.PointLight(); light.visible = index < 4; scene.add(light); return light;
+  });
   const previous = new THREE.Vector3(Infinity, Infinity, Infinity);
-  const nearest: (typeof sources[number] | undefined)[] = Array.from({ length: 4 }, () => undefined);
-  const distances = new Float64Array(4);
-  return (position: THREE.Vector3) => {
-    if (previous.distanceToSquared(position) < 4) return;
+  let previousCount = -1;
+  const nearest: (typeof sources[number] | undefined)[] = Array.from({ length: pool.length }, () => undefined);
+  const distances = new Float64Array(pool.length);
+  return (position: THREE.Vector3, count = 4) => {
+    const nextCount = Number.isFinite(count) ? THREE.MathUtils.clamp(Math.floor(count), 0, pool.length) : 4;
+    if (nextCount === previousCount && previous.distanceToSquared(position) < 4) return;
+    previousCount = nextCount;
     previous.copy(position); nearest.fill(undefined); distances.fill(Infinity);
     for (const source of sources) {
       const distance = source.position.distanceToSquared(position);
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < nextCount; i++) {
         if (distance >= distances[i]) continue;
-        for (let j = 3; j > i; j--) { distances[j] = distances[j - 1]; nearest[j] = nearest[j - 1]; }
+        for (let j = nextCount - 1; j > i; j--) { distances[j] = distances[j - 1]; nearest[j] = nearest[j - 1]; }
         distances[i] = distance; nearest[i] = source; break;
       }
     }
-    pool.forEach((light, i) => { const source = nearest[i]; if (!source) { light.intensity = 0; return; }
+    pool.forEach((light, i) => { const source = nearest[i]; light.visible = i < nextCount && !!source;
+      if (!light.visible || !source) { light.intensity = 0; return; }
       light.position.copy(source.position); light.color.copy(source.color); light.intensity = source.intensity; light.distance = source.distance; light.decay = source.decay;
     });
   };

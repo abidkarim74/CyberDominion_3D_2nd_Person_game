@@ -4,6 +4,8 @@ import { CAR_HALF_LENGTH, CAR_HALF_WIDTH, type ColliderGrid, type WorldCollider 
 import { CITY_EDGE } from './city-layout';
 import { PersonIdleMotion } from './person-idle-motion';
 import { PersonSeatMotion } from './person-seat-motion';
+import { PersonSteeringMotion } from './person-steering-motion';
+import { PersonDriverVisibility } from './person-driver-visibility';
 
 export type PersonMode = 'driving' | 'walking' | 'entering' | 'exiting';
 export type VehicleBlocker = { x: number; z: number; yaw: number; hx: number; hz: number };
@@ -80,6 +82,9 @@ export class PersonController {
   private mixer?: THREE.AnimationMixer;
   private idleMotion?: PersonIdleMotion;
   private seatMotion?: PersonSeatMotion;
+  private steeringMotion?: PersonSteeringMotion;
+  private driverVisibility?: PersonDriverVisibility;
+  private driverView = false;
   private readonly actions = new Map<string, THREE.AnimationAction>();
   private activeAction?: THREE.AnimationAction;
   private transition?: Transition;
@@ -127,7 +132,8 @@ export class PersonController {
 
   constructor(private readonly scene: THREE.Scene, private readonly collisionWorld: ColliderGrid,
     private readonly getGroundHeight: (x: number, z: number) => number,
-    private readonly cabin?: THREE.Object3D) {
+    private readonly cabin?: THREE.Object3D,
+    private readonly steeringWheel?: THREE.Object3D) {
     this.root.name = 'Player / realistic animated person';
     this.root.rotation.order = 'YXZ';
     this.root.userData.dynamic = true;
@@ -172,6 +178,9 @@ export class PersonController {
       this.mixer.update(0);
       this.idleMotion = new PersonIdleMotion(this.model);
       this.seatMotion = new PersonSeatMotion(this.model);
+      if (this.steeringWheel) this.steeringMotion = new PersonSteeringMotion(this.model, this.steeringWheel);
+      this.driverVisibility = new PersonDriverVisibility(this.model);
+      this.driverVisibility.setDriverView(this.driverView);
       this.refreshInteraction();
     }, undefined, error => {
       if (!this.disposed) this.failLoad(error instanceof Error ? error.message : 'The character model could not be loaded.');
@@ -188,7 +197,15 @@ export class PersonController {
   }
   get diagnostics() {
     return { ...this.diagnosticState, mode: this.mode, ready: this.ready, speed: this.speed,
+      steering: this.steeringMotion?.diagnostics,
+      driverVisibility: this.driverVisibility?.diagnostics,
       doorOpenAmount: this.doorOpenAmount, position: { x: this.position.x, y: this.position.y, z: this.position.z } };
+  }
+
+  /** Cockpit view keeps the rigged arms while clearing the camera's head volume. */
+  setDriverView(enabled: boolean) {
+    this.driverView = enabled;
+    this.driverVisibility?.setDriverView(enabled);
   }
 
   update(delta: number, pressed: ReadonlySet<string>, carPosition: THREE.Vector3, carYaw: number,
@@ -196,6 +213,7 @@ export class PersonController {
     if (this.disposed) return;
     const dt = THREE.MathUtils.clamp(delta, 0, .1);
     // Remove the last procedural pose before the mixer writes this frame.
+    this.steeringMotion?.restore();
     this.idleMotion?.restore();
     this.seatMotion?.restore();
     this.rememberCar(carPosition, carYaw, carSpeed);
@@ -221,6 +239,11 @@ export class PersonController {
     this.idleMotion?.update(dt, this.mode === 'walking' && this.speed < .10,
       this.mode === 'driving', this.transferDuck);
     if (this.mode !== 'walking') this.seatMotion?.update(this.ankleFloor);
+    const progress = this.transition ? this.transition.elapsed / TRANSITION_SECONDS : 0;
+    const grip = this.mode === 'driving' ? 1
+      : this.mode === 'exiting' ? 1 - smooth(progress / .12)
+      : this.mode === 'entering' ? smooth((progress - .86) / .14) : 0;
+    this.steeringMotion?.update(grip);
     this.refreshInteraction();
   }
 
@@ -248,6 +271,7 @@ export class PersonController {
   }
 
   resetDriving(carPosition = this.lastCarPosition, carYaw = this.lastCarYaw) {
+    this.steeringMotion?.restore();
     this.idleMotion?.restore();
     this.seatMotion?.restore();
     this.rememberCar(carPosition, carYaw, 0);
@@ -267,9 +291,11 @@ export class PersonController {
     if (this.disposed) return;
     this.disposed = true;
     this.loaded = false;
+    this.steeringMotion?.restore();
     this.idleMotion?.restore();
     this.seatMotion?.restore();
     this.mixer?.stopAllAction();
+    this.driverVisibility?.dispose();
     if (this.model) {
       this.mixer?.uncacheRoot(this.model);
       this.disposeModel(this.model);

@@ -24,6 +24,9 @@ bpy.ops.wm.open_mainfile(filepath=str(SOURCE),use_scripts=False,load_ui=False)
 # Fit the existing collision volume, retaining the source's flowing surfaces.
 # Source front is -Y and Z is up; destination Blender front is +Y.
 transform=Matrix(((.85,0,0,0),(0,-.9261658,0,-.052*.9261658),(0,0,.96556,.61963),(0,0,0,1)))
+driver_door=bpy.data.objects['door_rf_ok']
+passenger_door=bpy.data.objects['door_lf_ok']
+driver_hinge=transform@bpy.data.objects['door_rf_Pivot'].matrix_world.translation
 skip={'Interior','Interior_badge','interiorlights','movsteer_0.5','steer_badge','speedook','wheel','hub_rf','hub_lf','hub_rb','hub_lb','bump_rear','dvorleft','dvorright'}
 material_map={
     'primary':'paint','secondary':'secondaryPaint','speedook.0':'trim','speedook.1':'alloy',
@@ -35,15 +38,27 @@ material_map={
 lamp_map={'headlights':'white','drl':'white','taillights':'red','brakelights':'red','turnlights_f':'amber','turnlights_r':'amber','platelights':'white'}
 groups={}
 
-# Separate by the final material first so paint keeps more geometry than hidden
-# underbody pieces, and simplification never crosses UV/material boundaries.
+# Keep the authored driver door and all of its children separate from the
+# chassis before simplification. Material batches must not erase moving parts.
 for obj in list(bpy.data.objects):
     if obj.type!='MESH' or obj.name in skip:continue
+    ancestor=obj
+    while ancestor and ancestor!=driver_door:ancestor=ancestor.parent
+    part='driverDoor' if ancestor else 'body'
+    if part=='body':
+        ancestor=obj
+        while ancestor and ancestor!=passenger_door:ancestor=ancestor.parent
+        if ancestor:part='passengerDoor'
     source_data=obj.data
     for polygon in source_data.polygons:
         old=source_data.materials[polygon.material_index].name
         key=lamp_map.get(obj.name,material_map.get(old,'amber' if old.startswith('indicator') else 'trim'))
-        group=groups.setdefault(key,{'p':[],'f':[],'uv':[],'smooth':[],'normals':[]})
+        panel_part=part
+        if part=='body' and obj.name=='chassis_Mesh':
+            perimeter=[transform@(obj.matrix_world@source_data.vertices[index].co) for index in polygon.vertices]
+            if any(abs(point.x)>.50 and .30<point.z<1.35 and -1.10<-point.y<.92 for point in perimeter):
+                panel_part='doorSurround'
+        group=groups.setdefault((panel_part,key),{'p':[],'f':[],'uv':[],'smooth':[],'normals':[]})
         face=[];uv=[];normals=[]
         normal_matrix=(transform@obj.matrix_world).to_3x3().inverted().transposed()
         for loop_index in polygon.loop_indices:
@@ -62,14 +77,19 @@ for old_material in bpy.data.materials:old_material.name='Source / '+old_materia
 for collection in list(bpy.data.collections):
     if collection.users==0:bpy.data.collections.remove(collection)
 body=bpy.data.collections.new('Bugatti / game body');bpy.context.scene.collection.children.link(body)
+body['driverDoorHinge']=(driver_hinge.x,driver_hinge.z,-driver_hinge.y)
 reference=bpy.data.collections.new('Bugatti / wheel and cabin reference');bpy.context.scene.collection.children.link(reference)
 studio=bpy.data.collections.new('Studio / presentation');bpy.context.scene.collection.children.link(studio)
-ratios={'paint':.32,'secondaryPaint':.32,'trim':.035,'carbon':.04,'alloy':.085,'lights':.075,'white':.42,'red':.16,'amber':.6,'badge':.8,'interior':.20,'glass':.50,'grille':1,'grilleFine':1,'grilleDense':1}
+# Retain enough authored topology for continuous panel seams, intake edges and
+# individual headlight fittings. These static material batches add no draws.
+ratios={'paint':.52,'secondaryPaint':.52,'trim':.065,'carbon':.075,'alloy':.13,'lights':.20,'white':.65,'red':.16,'amber':.6,'badge':.8,'interior':.20,'glass':.50,'grille':1,'grilleFine':1,'grilleDense':1}
 colors={'paint':(.075,.084,.100),'secondaryPaint':(.043,.050,.061),'trim':(.014,.018,.023),'carbon':(.018,.023,.027),'alloy':(.31,.34,.38),'glass':(.018,.033,.042),'white':(.8,.9,1),'red':(.6,.005,.01),'amber':(1,.27,.008)}
 textures={'badge':'badge.png','grille':'grill1.png','grilleFine':'grill2.png','grilleDense':'grill3.png','lights':'lights.png','interior':'interior.png'}
-stats=[]
-for key,g in groups.items():
-    data=bpy.data.meshes.new('Chiron / '+key);data.from_pydata(g['p'],[],g['f']);data.update()
+stats=[];game_materials={}
+door_ratios={'paint':.45,'secondaryPaint':.45,'trim':.16,'carbon':.16,'alloy':.22,'interior':.35,'glass':1}
+for (part,key),g in groups.items():
+    name='Chiron / '+(part+' / ' if part!='body' else '')+key
+    data=bpy.data.meshes.new(name);data.from_pydata(g['p'],[],g['f']);data.update()
     layer=data.uv_layers.new(name='Original Chiron UV')
     for polygon,uv,smooth in zip(data.polygons,g['uv'],g['smooth']):
         polygon.use_smooth=smooth
@@ -84,24 +104,52 @@ for key,g in groups.items():
     bmesh.ops.remove_doubles(bm,verts=list(bm.verts),dist=.00001)
     bmesh.ops.dissolve_degenerate(bm,dist=.0000001,edges=list(bm.edges))
     bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(data);bm.free()
-    obj=bpy.data.objects.new('Chiron / '+key,data);body.objects.link(obj)
-    mat=bpy.data.materials.new(key);mat.use_nodes=True
-    p=mat.node_tree.nodes.get('Principled BSDF');p.inputs['Base Color'].default_value=(*colors.get(key,(1,1,1)),1)
-    p.inputs['Metallic'].default_value=.62 if key in ('paint','secondaryPaint','alloy') else .1
-    p.inputs['Roughness'].default_value=.23 if key in ('paint','secondaryPaint','alloy') else .5
-    if key in ('paint','secondaryPaint'):p.inputs['Coat Weight'].default_value=1
-    if key in ('white','red','amber'):
-        p.inputs['Emission Color'].default_value=(*colors[key],1);p.inputs['Emission Strength'].default_value=2
-    if key in textures:
-        shutil.copyfile(SOURCE.parent/textures[key],TEX/textures[key])
-        im=bpy.data.images.load(str(TEX/textures[key]),check_existing=True)
-        texture=mat.node_tree.nodes.new('ShaderNodeTexImage');texture.image=im
-        mat.node_tree.links.new(texture.outputs['Color'],p.inputs['Base Color'])
-        if key=='badge':mat.node_tree.links.new(texture.outputs['Alpha'],p.inputs['Alpha'])
+    obj=bpy.data.objects.new(name,data);body.objects.link(obj);obj['carPart']=part
+    mat=game_materials.get(key)
+    if mat is None:
+        mat=bpy.data.materials.new(key);mat.use_nodes=True;game_materials[key]=mat
+        p=mat.node_tree.nodes.get('Principled BSDF');p.inputs['Base Color'].default_value=(*colors.get(key,(1,1,1)),1)
+        p.inputs['Metallic'].default_value=.62 if key in ('paint','secondaryPaint','alloy') else .1
+        p.inputs['Roughness'].default_value=.23 if key in ('paint','secondaryPaint','alloy') else .5
+        if key in ('paint','secondaryPaint'):p.inputs['Coat Weight'].default_value=1
+        if key in ('white','red','amber'):
+            p.inputs['Emission Color'].default_value=(*colors[key],1);p.inputs['Emission Strength'].default_value=2
+        if key in textures:
+            shutil.copyfile(SOURCE.parent/textures[key],TEX/textures[key])
+            im=bpy.data.images.load(str(TEX/textures[key]),check_existing=True)
+            texture=mat.node_tree.nodes.new('ShaderNodeTexImage');texture.image=im
+            mat.node_tree.links.new(texture.outputs['Color'],p.inputs['Base Color'])
+            if key=='badge':mat.node_tree.links.new(texture.outputs['Alpha'],p.inputs['Alpha'])
     data.materials.append(mat)
     raw=sum(len(p.vertices)-2 for p in data.polygons)
-    ratio=ratios[key]
-    if ratio<1:
+    ratio=door_ratios.get(key,ratios[key]) if part in ('driverDoor','passengerDoor') else ratios[key]
+    preserve_seams=part in ('driverDoor','passengerDoor','doorSurround') or key=='glass'
+    if preserve_seams:
+        boundary_mesh=bmesh.new();boundary_mesh.from_mesh(data)
+        boundary_positions={tuple(round(value,6) for value in vertex.co)
+                            for edge in boundary_mesh.edges if edge.is_boundary for vertex in edge.verts}
+        protected={vertex for edge in boundary_mesh.edges if edge.is_boundary for vertex in edge.verts}
+        # Collapse decimation moves each material's border independently and
+        # tears the shared shut lines/window seals. Dissolve only interior
+        # coplanar edges. If Blender also removes a perimeter vertex, keep
+        # that panel's source mesh so neighboring materials still meet exactly.
+        # Only the retained bitmap cabin material needs interior UV seams.
+        # Other panels use solid/procedural materials and retain their perimeter
+        # UVs; baked source normals restore the original smooth reflections.
+        interior_vertices=[vertex for vertex in boundary_mesh.verts if vertex not in protected]
+        interior_edges=[edge for edge in boundary_mesh.edges if all(vertex not in protected for vertex in edge.verts)]
+        bmesh.ops.dissolve_limit(boundary_mesh,verts=interior_vertices,edges=interior_edges,
+                               angle_limit=math.radians(3),use_dissolve_boundaries=False,
+                               delimit={'UV'} if key=='interior' else {'SHARP'})
+        boundary_mesh.to_mesh(data);boundary_mesh.free()
+        retained_positions={tuple(round(value,6) for value in vertex.co) for vertex in obj.data.vertices}
+        if not boundary_positions.issubset(retained_positions):
+            simplified=obj.data
+            obj.data=high_resolution.copy();obj.data.materials.append(mat)
+            bpy.data.meshes.remove(simplified)
+            data=obj.data
+        obj['protectedBoundaryVertices']=len(boundary_positions)
+    elif ratio<1:
         bpy.context.view_layer.objects.active=obj
         mod=obj.modifiers.new('Game geometry optimization','DECIMATE');mod.ratio=ratio;mod.use_collapse_triangulate=True
         bpy.ops.object.modifier_apply(modifier=mod.name)
@@ -113,7 +161,7 @@ for key,g in groups.items():
     mod.loop_mapping='POLYINTERP_NEAREST'
     bpy.ops.object.modifier_apply(modifier=mod.name)
     bpy.data.objects.remove(normal_source,do_unlink=True);bpy.data.meshes.remove(high_resolution)
-    data.calc_loop_triangles();stats.append({'material':key,'sourceTriangles':raw,'gameTriangles':len(data.loop_triangles)})
+    obj.data.calc_loop_triangles();stats.append({'part':part,'material':key,'sourceTriangles':raw,'gameTriangles':len(obj.data.loop_triangles)})
 
 # Thin parked blades follow the lower windshield instead of retaining the
 # source's raised wiper arms, which obstruct the game's driver eye position.

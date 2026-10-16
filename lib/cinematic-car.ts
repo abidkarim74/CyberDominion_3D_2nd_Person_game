@@ -8,6 +8,10 @@ import { addBugattiRearAero } from './bugatti-rear-aero';
 import { createNitroEffects, NITRO_OUTLETS } from './nitro-effects';
 import { createFrontMiniguns } from './front-miniguns';
 import { addPerformanceTire, createPerformanceTireAssets } from './performance-tires';
+import { createCeramicRotorMaps, createLacquerMaps } from './car-surface-textures';
+import { addBugattiBrakes, createBugattiBrakeAssets } from './car-brake-details';
+import { addCarExteriorDetails } from './car-exterior-details';
+import { addFieryRoof } from './car-roof';
 
 /** Small repeating 2x2 twill; all fiber detail is generated once at startup. */
 function makeCarbonTexture(): THREE.CanvasTexture {
@@ -47,53 +51,8 @@ function makeCarbonTexture(): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(12, 12);
-  return texture;
-}
-
-/** Procedural cross-drilled carbon-ceramic brake rotor */
-function makeRotorTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 128;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#77818a';
-  ctx.fillRect(0, 0, 128, 128);
-
-  // Concentric machining wear rings
-  for (let r = 24; r < 60; r += 2) {
-    ctx.beginPath();
-    ctx.arc(64, 64, r, 0, Math.PI * 2);
-    ctx.strokeStyle = r % 4 === 0 ? '#a0a9b2' : '#636e79';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-
-  // Cross-drilled circular cooling holes
-  ctx.fillStyle = '#080a0d';
-  for (let spoke = 0; spoke < 12; spoke++) {
-    const baseAngle = (spoke / 12) * Math.PI * 2;
-    for (let h = 0; h < 5; h++) {
-      const radius = 28 + h * 6;
-      const angle = baseAngle + h * 0.12;
-      const x = 64 + Math.cos(angle) * radius;
-      const y = 64 + Math.sin(angle) * radius;
-      ctx.beginPath();
-      ctx.arc(x, y, 1.8, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  // Dark anodized center hat
-  ctx.beginPath();
-  ctx.arc(64, 64, 22, 0, Math.PI * 2);
-  ctx.fillStyle = '#111418';
-  ctx.fill();
-  ctx.strokeStyle = '#5a636d';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.repeat.set(36, 36);
+  texture.anisotropy = 4;
   return texture;
 }
 
@@ -120,18 +79,22 @@ export function makeCar() {
 
   // ── Textures ──
   const carbonTexture = makeCarbonTexture();
-  const rotorMap = makeRotorTexture();
+  const rotorMaps = createCeramicRotorMaps();
+  const lacquerMaps = createLacquerMaps();
   const tireAssets = createPerformanceTireAssets();
 
   // Pearl-white lacquer keeps the entire silhouette readable in the night city.
   const paint = new THREE.MeshPhysicalMaterial({
-    color: 0xf4f5f2,
-    metalness: 0.08,
-    roughness: 0.23,
+    color: 0xebeeea,
+    metalness: 0.12,
+    roughness: 0.22,
+    roughnessMap: lacquerMaps.roughness,
+    bumpMap: lacquerMaps.bump,
+    bumpScale: .000018,
     clearcoat: 1.0,
-    clearcoatRoughness: 0.14,
+    clearcoatRoughness: 0.075,
     ior: 1.54,
-    envMapIntensity: 1.35,
+    envMapIntensity: 1.5,
   });
   paint.name = 'Bugatti / pearl white gloss clearcoat';
   paint.userData.vehiclePaint = true;
@@ -145,11 +108,11 @@ export function makeCar() {
     side: THREE.DoubleSide,
     map: carbonTexture,
     metalness: 0.12,
-    roughness: 0.4,
+    roughness: 0.32,
     clearcoat: 0.85,
     clearcoatRoughness: 0.22,
     bumpMap: carbonTexture,
-    bumpScale: 0.0007,
+    bumpScale: 0.00018,
     envMapIntensity: 1.15,
   });
   carbon.name = 'Car / resin-coated woven carbon';
@@ -176,18 +139,18 @@ export function makeCar() {
 
   // Tinted, reflective glass keeps the cockpit visible without a second full-city refraction render.
   const glass = new THREE.MeshPhysicalMaterial({
-    color: 0x151c22,
-    metalness: 0.03,
-    roughness: 0.22,
-    specularIntensity: 0.5,
+    color: 0x536570,
+    metalness: 0,
+    roughness: 0.085,
+    specularIntensity: 1,
     transmission: 0,
-    opacity: 0.88,
+    opacity: 0.53,
     depthWrite: false,
     transparent: true,
     ior: 1.52,
-    clearcoat: 0.35,
-    clearcoatRoughness: 0.26,
-    envMapIntensity: 0.65,
+    clearcoat: 1,
+    clearcoatRoughness: 0.055,
+    envMapIntensity: 0.9,
   });
   glass.name = 'Car / smoked laminated canopy';
 
@@ -207,12 +170,12 @@ export function makeCar() {
 
   // Dynamic cross-drilled carbon-ceramic brake disc material (supports thermal red-hot glow on hard braking)
   const brakeDiscMat = new THREE.MeshStandardMaterial({
-    color: 0x8e949b,
-    map: rotorMap,
-    bumpMap: rotorMap,
-    bumpScale: 0.0015,
-    metalness: 0.72,
-    roughness: 0.39,
+    color: 0xc4c8ce,
+    map: rotorMaps.map,
+    bumpMap: rotorMaps.bumpMap,
+    bumpScale: 0.00045,
+    metalness: 0.55,
+    roughness: 0.62,
     emissive: new THREE.Color(0xff3300),
     emissiveIntensity: 0.0,
   });
@@ -234,6 +197,8 @@ export function makeCar() {
   trim.name = 'Car / recessed satin trim';
   const { headlights, brakeLights } = addBlenderCarBody(body, { paint, secondaryPaint, carbon, alloy, amber, glass, trim, redAccent, white, red: brakeMat });
   addBugattiRearAero(body, { carbon, paint, trim, alloy });
+  addFieryRoof(body);
+  addCarExteriorDetails(body, { carbon, paint, trim, alloy });
 
   const cockpit = addDriverCockpit(body, { carbon, alloy, cyan });
 
@@ -244,16 +209,8 @@ export function makeCar() {
   const steering: THREE.Group[] = [];
   const brakeDiscs: THREE.Mesh[] = [];
 
-  const rotorGeo = new THREE.CylinderGeometry(.244, .244, .018, 40);
-  const pistonGeo = new THREE.CylinderGeometry(.016, .016, .01, 12);
   const wheelGeometries = createBugattiWheelGeometries();
-  const caliperShape = new THREE.Shape();
-  caliperShape.moveTo(-.028, -.078); caliperShape.lineTo(.028, -.078);
-  caliperShape.quadraticCurveTo(.047, -.078, .047, -.055);
-  caliperShape.lineTo(.047, .055); caliperShape.quadraticCurveTo(.047, .078, .028, .078);
-  caliperShape.lineTo(-.028, .078); caliperShape.quadraticCurveTo(-.047, .078, -.047, .055);
-  caliperShape.lineTo(-.047, -.055); caliperShape.quadraticCurveTo(-.047, -.078, -.028, -.078);
-  const caliperGeo = new THREE.ExtrudeGeometry(caliperShape, { depth: .045, bevelEnabled: true, bevelSize: .003, bevelThickness: .003, bevelSegments: 1, curveSegments: 3, steps: 1 });
+  const brakeAssets = createBugattiBrakeAssets();
 
   for (const side of [-1, 1]) for (const axle of [-1, 1]) {
     const pivot = new THREE.Group();
@@ -273,26 +230,8 @@ export function makeCar() {
 
     addBugattiWheelFace(wheel, side, face, { alloy: wheelAlloy, lip: polishedRim, carbon, hub: wheelBadge }, wheelGeometries);
 
-    // Carbon-ceramic cross-drilled rotor (marked dynamic for thermal braking glow)
-    const disc = new THREE.Mesh(rotorGeo, brakeDiscMat);
-    disc.rotation.z = Math.PI / 2;
-    disc.position.x = face - side * .04;
-    disc.userData.dynamic = true;
-    wheel.add(disc);
-    brakeDiscs.push(disc);
-
-    // High performance 6-piston monobloc brake caliper
-    const caliper = new THREE.Mesh(caliperGeo, caliperMat);
-    caliper.position.set(face - side * .020, .08, .19);
-    caliper.rotation.set(-.4, side * Math.PI / 2, 0);
-    pivot.add(caliper);
-    // Caliper dual piston details
-    for (const p of [-.04, .04]) {
-      const piston = new THREE.Mesh(pistonGeo, alloy);
-      piston.rotation.z = Math.PI / 2;
-      piston.position.set(face - side * .035, .08 + p, .19);
-      pivot.add(piston);
-    }
+    brakeDiscs.push(addBugattiBrakes(wheel, pivot, side, face,
+      { rotor: brakeDiscMat, caliper: caliperMat, alloy, carbon, trim }, brakeAssets));
   }
 
   // ═══════════════════════════════════════════════════════
@@ -335,7 +274,7 @@ export function makeCar() {
   const exhausts: THREE.Mesh[] = [];
   const flames: THREE.Mesh[] = [];
   const exhaustCoreGeo = new THREE.CylinderGeometry(.033, .033, .08, 16);
-  const exhaustCoreMat = new THREE.MeshStandardMaterial({ color: 0x080b0e, metalness: .55, roughness: .65, emissive: 0x0c6321, emissiveIntensity: .3 });
+  const exhaustCoreMat = new THREE.MeshStandardMaterial({ color: 0x080b0e, metalness: .55, roughness: .65, emissive: 0x712408, emissiveIntensity: 0 });
   const sideNozzleGeo = new THREE.CylinderGeometry(.078, .065, .16, 16, 1, true);
   const sideCoreGeo = new THREE.CylinderGeometry(.057, .057, .08, 16);
 
@@ -405,6 +344,8 @@ export function makeCar() {
   for (const wheel of wheels) {
     const parent = wheel.parent!;
     parent.remove(wheel);
+    // Calipers stay fixed on the steering knuckle while their hardware shares draws.
+    batchArchitecture(parent);
     batchArchitecture(wheel);
     // Front and rear wheels on each side reuse the same final GPU buffers.
     for (const child of wheel.children) {

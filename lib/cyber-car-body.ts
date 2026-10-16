@@ -233,25 +233,59 @@ export function addBugattiTailLights(body: THREE.Group, material: THREE.Material
 
 /** Author the repeating forged-wheel parts once, then reuse them on all four wheels. */
 export function createBugattiWheelGeometries() {
+  // The forged arms bow behind the polished outer lip instead of reading as flat bars.
+  const dish = (radius: number) => {
+    const t = THREE.MathUtils.clamp((radius - .070) / .225, 0, 1);
+    return .012 * t - .021 * Math.sin(t * Math.PI);
+  };
   const spokes = [-1, 1].map(branch => {
     const shape = new THREE.Shape();
-    const outline = [[.073, -.11], [.158, -.045], [.288, branch * .16 - .040], [.299, branch * .16 + .038], [.155, .055], [.074, .12]];
+    const outline = [[.070, -.070], [.136, -.052], [.204, .070], [.290, .135], [.295, .205], [.195, .145], [.121, .053], [.070, .085]];
     outline.forEach(([radius, angle], i) => {
-      const x = Math.cos(angle) * radius, y = Math.sin(angle) * radius;
+      const x = Math.cos(angle) * radius, y = Math.sin(angle) * radius * branch;
       if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
     });
     shape.closePath();
-    return new THREE.ExtrudeGeometry(shape, { depth: .017, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: .0025, bevelThickness: .002 });
+    const geometry = new THREE.ExtrudeGeometry(shape, { depth: .017, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: .0021, bevelThickness: .0018 });
+    const positions = geometry.getAttribute('position');
+    for (let i = 0; i < positions.count; i++) {
+      positions.setZ(i, positions.getZ(i) + dish(Math.hypot(positions.getX(i), positions.getY(i))));
+    }
+    geometry.computeVertexNormals();
+    return geometry;
+  });
+  // Narrow machined facets catch light without filling the open Y-spoke windows.
+  const spokeFacets = [-1, 1].map(branch => {
+    const positions: number[] = [], indices: number[] = [];
+    for (const [radius, angle] of [[.096, .012], [.139, .035], [.218, .115], [.280, .160]]) {
+      for (const edge of [-1, 1]) {
+        const a = angle + edge * .009;
+        positions.push(Math.cos(a) * radius, Math.sin(a) * radius * branch, .021 + dish(radius));
+      }
+    }
+    for (let i = 0; i < 3; i++) {
+      const a = i * 2;
+      indices.push(a, a + 2, a + 3, a, a + 3, a + 1);
+    }
+    if (branch < 0) for (let i = 0; i < indices.length; i += 3) [indices[i + 1], indices[i + 2]] = [indices[i + 2], indices[i + 1]];
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices); geometry.computeVertexNormals();
+    return geometry;
   });
   return {
-    spokes,
+    spokes, spokeFacets,
     barrel: new THREE.CylinderGeometry(.298, .298, .17, 64, 1, true),
     rim: new THREE.TorusGeometry(.299, .008, 6, 64),
-    innerRim: new THREE.RingGeometry(.284, .290, 64),
-    hub: new THREE.CylinderGeometry(.079, .090, .028, 24),
-    bolt: new THREE.CylinderGeometry(.006, .006, .007, 6),
-    cap: new THREE.CircleGeometry(.038, 24),
+    innerRim: new THREE.RingGeometry(.283, .290, 64),
+    hub: new THREE.CylinderGeometry(.073, .084, .027, 24),
+    lugInset: new THREE.CircleGeometry(.009, 10),
+    lugSocket: new THREE.RingGeometry(.0065, .010, 10),
+    bolt: new THREE.CylinderGeometry(.0048, .0048, .004, 6),
+    cap: new THREE.CircleGeometry(.035, 24),
+    capTrim: new THREE.RingGeometry(.035, .039, 24),
     valve: new THREE.CylinderGeometry(.004, .005, .014, 8),
+    valveCollar: new THREE.CylinderGeometry(.006, .006, .003, 8),
   };
 }
 
@@ -263,23 +297,37 @@ export function addBugattiWheelFace(wheel: THREE.Group, side: number, face: numb
     const lip = new THREE.Mesh(geometry, materials.lip ?? materials.alloy);
     lip.rotation.y = side * Math.PI / 2; lip.position.x = face + side * offset; wheel.add(lip);
   }
-  for (let pair = 0; pair < 5; pair++) for (const geometry of geometries.spokes) {
-    const spoke = new THREE.Mesh(geometry, materials.alloy);
-    spoke.rotation.set(0, side * Math.PI / 2, pair * Math.PI * 2 / 5);
-    spoke.position.x = face; wheel.add(spoke);
+  const wheelFace = new THREE.Group();
+  wheelFace.name = 'Bugatti / dished forged Y-spoke face';
+  wheelFace.rotation.y = side * Math.PI / 2; wheelFace.position.x = face; wheel.add(wheelFace);
+  for (let pair = 0; pair < 5; pair++) for (let branch = 0; branch < 2; branch++) {
+    const spoke = new THREE.Mesh(geometries.spokes[branch], materials.alloy);
+    const facet = new THREE.Mesh(geometries.spokeFacets[branch], materials.lip ?? materials.alloy);
+    spoke.rotation.z = facet.rotation.z = pair * Math.PI * 2 / 5;
+    wheelFace.add(spoke, facet);
   }
   const hub = new THREE.Mesh(geometries.hub, materials.alloy);
   hub.rotation.z = Math.PI / 2; hub.position.x = face + side * .015; wheel.add(hub);
   for (let i = 0; i < 5; i++) {
     const angle = i * Math.PI * 2 / 5;
+    const y = Math.cos(angle) * .055, z = Math.sin(angle) * .055;
+    const inset = new THREE.Mesh(geometries.lugInset, materials.carbon);
+    inset.rotation.y = side * Math.PI / 2; inset.position.set(face + side * .0290, y, z); wheel.add(inset);
+    const socket = new THREE.Mesh(geometries.lugSocket, materials.lip ?? materials.alloy);
+    socket.rotation.y = side * Math.PI / 2; socket.position.set(face + side * .0295, y, z); wheel.add(socket);
     const bolt = new THREE.Mesh(geometries.bolt, materials.carbon);
-    bolt.rotation.z = Math.PI / 2; bolt.position.set(face + side * .032, Math.cos(angle) * .056, Math.sin(angle) * .056); wheel.add(bolt);
+    bolt.rotation.z = Math.PI / 2; bolt.position.set(face + side * .030, y, z); wheel.add(bolt);
   }
   const cap = new THREE.Mesh(geometries.cap, materials.hub);
   cap.rotation.y = side * Math.PI / 2; cap.position.x = face + side * .031;
   cap.name = 'Bugatti / EB wheel medallion'; wheel.add(cap);
+  const capTrim = new THREE.Mesh(geometries.capTrim, materials.lip ?? materials.alloy);
+  capTrim.rotation.y = side * Math.PI / 2; capTrim.position.x = face + side * .0315; wheel.add(capTrim);
   const valve = new THREE.Mesh(geometries.valve, materials.carbon);
   valve.rotation.z = Math.PI / 2;
   valve.position.set(face + side * .016, Math.cos(.52) * .274, Math.sin(.52) * .274);
   valve.name = 'Bugatti / recessed tyre inflation valve'; wheel.add(valve);
+  const collar = new THREE.Mesh(geometries.valveCollar, materials.lip ?? materials.alloy);
+  collar.rotation.z = Math.PI / 2;
+  collar.position.set(face + side * .010, Math.cos(.52) * .274, Math.sin(.52) * .274); wheel.add(collar);
 }

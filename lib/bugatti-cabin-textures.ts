@@ -74,10 +74,20 @@ export function makeCabinDetailAtlas() {
   c.fillStyle = '#9aa4af'; c.font = '18px sans-serif'; c.fillText('CHIRON', 766, 108);
   c.fillStyle = '#c6ccd3'; c.font = '18px sans-serif';
   for (const [label, x, y] of [['TEMP', 640, 174], ['FAN', 895, 174], ['AUTO', 640, 288], ['AC', 895, 288], ['P  R  N  D', 766, 388], ['START / STOP', 766, 460]] as const) c.fillText(label, x, y);
+  // Small controls share the existing atlas and material instead of new textures.
+  c.font = '24px sans-serif'; c.fillStyle = '#dae0e6';
+  c.fillText('+', 64, 291); c.fillText('−', 192, 291);
+  c.fillText('MODE', 320, 291); c.fillText('SET', 448, 291);
+  c.font = '15px sans-serif'; c.fillStyle = '#aab7c4';
+  c.fillText('VOLUME', 128, 336); c.fillText('CRUISE', 384, 336);
+  c.font = '16px sans-serif'; c.fillStyle = '#d3dee7';
+  for (const [index, label] of ['AUTO', 'FAN', '21°', 'AC'].entries()) c.fillText(label, 64 + index * 128, 368);
+  c.font = '26px sans-serif'; c.fillStyle = '#bfcad4';
+  c.fillText('ENGINE', 128, 423); c.fillText('START / STOP', 128, 456);
   return canvasTexture(canvas);
 }
 
-/** Three analog-style instruments update at most ten times a second. */
+/** Analog speedometer and digital side instruments update at most ten times a second. */
 export function makeBugattiInstruments() {
   const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 512;
   const c = canvas.getContext('2d')!;
@@ -85,7 +95,7 @@ export function makeBugattiInstruments() {
   map.generateMipmaps = false; map.minFilter = THREE.LinearFilter;
   let previous = '';
   let readout = { speed: 0, boost: 100, firing: false };
-  function dial(cx: number, cy: number, radius: number, value: number, maximum: number, divisions: number, label: string, unit: string) {
+  function dial(cx: number, cy: number, radius: number, maximum: number, divisions: number, label: string, unit: string) {
     const metal = c.createRadialGradient(cx - radius * .25, cy - radius * .3, radius * .5, cx, cy, radius);
     metal.addColorStop(0, '#161d25'); metal.addColorStop(.91, '#080c11'); metal.addColorStop(.93, '#9ba6b1'); metal.addColorStop(.97, '#3b434b'); metal.addColorStop(1, '#abb4bd');
     c.fillStyle = metal; c.beginPath(); c.arc(cx, cy, radius, 0, Math.PI * 2); c.fill();
@@ -104,6 +114,22 @@ export function makeBugattiInstruments() {
     }
     c.font = `${radius > 140 ? 15 : 11}px sans-serif`; c.fillStyle = '#a7b4c0';
     c.fillText(label, cx, cy - radius * .31); c.fillText(unit, cx, cy + radius * .46);
+  }
+  // Tick marks, gradients and lettering never change. Rasterize them once;
+  // live updates only copy that face and paint needles/digital readouts.
+  dial(512, 265, 180, 420, 14, 'BUGATTI', 'km/h');
+  for (const [x, title, unit] of [[68, 'ENGINE', 'x1000 RPM'], [742, 'POWER', 'RESERVE %']] as const) {
+    c.fillStyle = '#09131f'; c.fillRect(x, 179, 216, 192);
+    c.strokeStyle = '#374c64'; c.lineWidth = 2; c.strokeRect(x, 179, 216, 192);
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillStyle = '#bacddd'; c.font = '18px sans-serif'; c.fillText(title, x + 108, 203);
+    c.fillStyle = '#809daf'; c.font = '14px sans-serif'; c.fillText(unit, x + 108, 343);
+    for (let i = 0; i < 8; i++) { c.fillStyle = '#20364b'; c.fillRect(x + 21 + i * 22, 304, 16, 12); }
+  }
+  c.fillStyle = '#7690a3'; c.font = '16px sans-serif'; c.fillText('CHIRON  /  W16', 512, 474);
+  const face = document.createElement('canvas'); face.width = canvas.width; face.height = canvas.height;
+  face.getContext('2d')!.drawImage(canvas, 0, 0);
+  function needle(cx: number, cy: number, radius: number, value: number, maximum: number) {
     const angle = Math.PI * (.75 + 1.5 * THREE.MathUtils.clamp(value / maximum, 0, 1));
     c.save(); c.translate(cx, cy); c.rotate(angle);
     c.fillStyle = '#c85555'; c.beginPath(); c.moveTo(-radius * .15, -3); c.lineTo(radius * .82, -1.5);
@@ -116,13 +142,19 @@ export function makeBugattiInstruments() {
     if (signature === previous) return;
     previous = signature; readout = { speed, boost, firing: frame.firing };
     c.clearRect(0, 0, 1024, 512);
-    dial(170, 277, 126, Math.min(8, 1.1 + speed * .018 + (frame.boosting ? .7 : 0)), 8, 8, 'W16', 'x1000 RPM');
-    dial(512, 265, 180, speed, 420, 14, 'BUGATTI', 'km/h');
-    dial(854, 277, 126, boost, 100, 5, 'POWER', 'RESERVE %');
+    c.drawImage(face, 0, 0);
+    needle(512, 265, 180, speed, 420);
+    const rpm = Math.min(8, 1.1 + speed * .018 + (frame.boosting ? .7 : 0));
+    c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#9cd6f2'; c.font = '42px monospace';
+    c.fillText(rpm.toFixed(1), 176, 262); c.fillText(String(boost), 850, 262);
+    for (const [x, fraction] of [[68, rpm / 8], [742, boost / 100]]) {
+      c.fillStyle = '#669fbc';
+      for (let i = 0; i < Math.round(fraction * 8); i++) c.fillRect(x + 21 + i * 22, 304, 16, 12);
+    }
     c.textAlign = 'center'; c.textBaseline = 'middle';
     c.fillStyle = '#dce5eb'; c.font = '25px sans-serif'; c.fillText(String(speed), 512, 348);
     c.font = '15px sans-serif'; c.fillStyle = '#aebdc9'; c.fillText(speed === 0 ? 'P' : `D${Math.min(7, 1 + Math.floor(speed / 45))}`, 512, 388);
-    c.fillStyle = '#7690a3'; c.font = '16px sans-serif'; c.fillText('CHIRON  /  W16', 512, 474);
+    c.font = '16px sans-serif';
     if (frame.boosting) { c.fillStyle = '#c9a56d'; c.fillText('SPORT', 854, 441); }
     if (frame.firing) { c.fillStyle = '#c96b67'; c.beginPath(); c.arc(953, 456, 4, 0, Math.PI * 2); c.fill(); }
     map.needsUpdate = true;

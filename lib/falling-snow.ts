@@ -105,6 +105,11 @@ export function addFallingSnow(scene: THREE.Scene, shelters: readonly CoveredRoa
   scene.add(flakes);
   return {
     flakes,
+    setDensity(fraction: number) {
+      const density = Number.isFinite(fraction) ? THREE.MathUtils.clamp(fraction, 0, 1) : 1;
+      geometry.setDrawRange(0, Math.round(SNOW_COUNT * density));
+      flakes.visible = density > 0;
+    },
     update(time: number, position: THREE.Vector3, yaw: number, height: number) {
       uniforms.time.value = time;
       uniforms.carPosition.value.copy(position);

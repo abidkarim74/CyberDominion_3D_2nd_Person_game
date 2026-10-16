@@ -153,14 +153,15 @@ try {
 
   report.checks.doorMaterials = await page.evaluate(() => {
     const g = document.querySelector('canvas').__drive, hinge = g.carRig.driverDoor, meshes = [];
-    hinge.traverse(mesh => { if (mesh.isMesh) meshes.push({ name: mesh.name, visible: mesh.visible,
+    hinge.traverse(mesh => { if (mesh.isMesh) meshes.push({ name: mesh.name, carPart: mesh.userData.carPart, visible: mesh.visible,
       triangles: (mesh.geometry.index?.count ?? mesh.geometry.attributes.position.count) / 3,
       materials: (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map(material =>
         ({ name: material.name, side: material.side, transparent: material.transparent, opacity: material.opacity })) }); });
     return meshes;
   });
   const opaqueDoor = report.checks.doorMaterials.filter(mesh => mesh.materials.some(material => !material.transparent && material.opacity >= .99));
-  assert.ok(opaqueDoor.some(mesh => /driver door trim|door card|door panel|door armrest/i.test(mesh.name)), 'The upholstered interior follows the hinge');
+  assert.ok(opaqueDoor.some(mesh => mesh.carPart === 'driverDoor' && /trim|interior/i.test(mesh.name)),
+    'The fitted authored interior follows the hinge');
   assert.ok(opaqueDoor.filter(mesh => mesh.name.startsWith('Driver door /')).every(mesh => mesh.materials.every(material => material.side === 2)),
     'Painted door skin is visible from both sides');
   assert.ok(entering.at(-1).door > .9, 'Door stays open during approach and ducking');

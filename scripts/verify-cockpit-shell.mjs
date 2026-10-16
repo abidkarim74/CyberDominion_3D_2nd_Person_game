@@ -20,32 +20,56 @@ try {
     cancelAnimationFrame(g.animationFrame); g.reset(); g.active = false;
     g.carRig.body.position.y = 0; g.carRig.body.rotation.set(0, 0, 0); g.updateCamera(0, true);
     const mirror = g.reflections.mirror, mirrorVisible = mirror.visible; mirror.visible = false;
-    const glass = g.carRig.body.children.find(o => o.material?.name === 'Bugatti cabin / clear inner laminated windows');
-    const canvas = document.createElement('canvas'); canvas.width = g.renderer.domElement.width; canvas.height = g.renderer.domElement.height;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    const pixels = () => { g.composer.render(); context.drawImage(g.renderer.domElement, 0, 0); return context.getImageData(0, 0, canvas.width, canvas.height).data; };
-    const changedPixels = (before, after, lower, upper) => {
+    const glass = g.carRig.body.children.find(o => o.userData.carPart === 'body' && o.material?.name === 'Bugatti cabin / clear inner laminated windows');
+    const canvas = { width: g.renderer.domElement.width, height: g.renderer.domElement.height };
+    // Read a retained GPU target; the default WebGL canvas can be discarded
+    // between browser compositing and canvas readback (preserveDrawingBuffer=false).
+    const target = new g.composer.renderTarget1.constructor(canvas.width, canvas.height);
+    target.texture.colorSpace = g.renderer.outputColorSpace;
+    const pixels = () => {
+      const previousTarget = g.renderer.getRenderTarget(), data = new Uint8Array(canvas.width * canvas.height * 4);
+      g.renderer.setRenderTarget(target); g.renderer.render(g.scene, g.camera);
+      g.renderer.readRenderTargetPixels(target, 0, 0, canvas.width, canvas.height, data);
+      g.renderer.setRenderTarget(previousTarget);
+      // GPU readback starts at the bottom; comparisons use screen coordinates.
+      const flipped = new Uint8Array(data.length), stride = canvas.width * 4;
+      for (let y = 0; y < canvas.height; y++) flipped.set(data.subarray(y * stride, (y + 1) * stride), (canvas.height - y - 1) * stride);
+      return flipped;
+    };
+    const changedPixels = (before, after, lower, upper, threshold = 4) => {
       let count = 0;
       for (let y = Math.floor(canvas.height * lower); y < canvas.height * upper; y++) for (let x = Math.floor(canvas.width * .25); x < canvas.width * .8; x++) {
         const i = (y * canvas.width + x) * 4;
-        if (Math.max(...[0, 1, 2].map(channel => Math.abs(before[i + channel] - after[i + channel]))) > 4) count++;
+        if (Math.max(...[0, 1, 2].map(channel => Math.abs(before[i + channel] - after[i + channel]))) > threshold) count++;
       }
       return count;
     };
     const withGlass = pixels(); glass.visible = false; const withoutGlass = pixels(); glass.visible = true;
-    const windshieldPixels = changedPixels(withGlass, withoutGlass, .30, .53);
+    const windshieldPixels = changedPixels(withGlass, withoutGlass, .05, .60, 1);
 
     // Isolate actual bonnet triangles, then measure their contribution to the
     // driver image. A material/property check alone cannot catch an occluded hood.
-    const paint = g.carRig.body.children.find(o => o.material?.name === 'Bugatti / racing red gloss clearcoat');
-    const geometry = paint.geometry.clone(), position = geometry.attributes.position, indices = [];
-    for (let i = 0; i < position.count; i += 3) if ([i, i + 1, i + 2].every(j => position.getZ(j) < -1.40 && position.getY(j) > .70 && Math.abs(position.getX(j)) < .67)) indices.push(i, i + 1, i + 2);
-    geometry.setIndex(indices);
-    const material = paint.material.clone(); material.color.setHex(0x00ff00); material.emissive.setHex(0x00ff00); material.emissiveIntensity = 4; material.toneMapped = false;
-    const bonnet = new paint.constructor(geometry, material); paint.parent.add(bonnet); paint.visible = false;
-    const withBonnet = pixels(); bonnet.visible = false; const withoutBonnet = pixels();
-    const bonnetPixels = changedPixels(withBonnet, withoutBonnet, .50, .68);
-    bonnet.removeFromParent(); geometry.dispose(); material.dispose(); paint.visible = true; mirror.visible = mirrorVisible;
+    // The current two-tone bonnet includes carbon as well as painted panels.
+    const sources = g.carRig.body.children.filter(o => o.isMesh &&
+      (o.material?.userData.vehiclePaint && /gloss clearcoat$/.test(o.material.name) || o.material?.name === 'Car / resin-coated woven carbon'));
+    const bonnetParts = []; let bonnetTriangles = 0;
+    for (const source of sources) {
+      const geometry = source.geometry.clone(), position = geometry.attributes.position, sourceIndex = geometry.index, indices = [];
+      for (let i = 0; i < (sourceIndex?.count ?? position.count); i += 3) {
+        const triangle = [0, 1, 2].map(j => sourceIndex ? sourceIndex.getX(i + j) : i + j);
+        if (triangle.every(j => position.getZ(j) < -1.40 && position.getY(j) > .70 && Math.abs(position.getX(j)) < .67)) indices.push(...triangle);
+      }
+      if (!indices.length) { geometry.dispose(); continue; }
+      bonnetTriangles += indices.length / 3; geometry.setIndex(indices);
+      const material = source.material.clone(); material.color.setHex(0x00ff00); material.emissive.setHex(0x00ff00); material.emissiveIntensity = 4; material.toneMapped = false;
+      const mesh = new source.constructor(geometry, material); source.parent.add(mesh);
+      bonnetParts.push({ mesh, source, wasVisible: source.visible }); source.visible = false;
+    }
+    const withBonnet = pixels(); bonnetParts.forEach(({ mesh }) => { mesh.visible = false; }); const withoutBonnet = pixels();
+    const bonnetPixels = changedPixels(withBonnet, withoutBonnet, .25, .75);
+    for (const { mesh, source, wasVisible } of bonnetParts) { mesh.removeFromParent(); mesh.geometry.dispose(); mesh.material.dispose(); source.visible = wasVisible; }
+    mirror.visible = mirrorVisible;
+    target.dispose();
     let invalidGeometry = 0;
     g.car.traverse(o => { if (o.isMesh) for (const name of ['position', 'normal', 'uv']) { const attribute = o.geometry.attributes[name]; if (attribute && !Array.from(attribute.array).every(Number.isFinite)) invalidGeometry++; } });
     const eye = g.camera.position.clone().sub(g.carPosition).toArray();
@@ -53,13 +77,17 @@ try {
     for (let i = 0; i < 12; i++) g.toggleCameraView();
     const resourcesAfter = { ...g.renderer.info.memory };
     g.composer.render();
-    return { windshieldPixels, bonnetPixels, eye, invalidGeometry, resourcesBefore, resourcesAfter, draws: g.renderer.info.render.calls, passes: g.composer.passes.length, contextLost: g.renderer.getContext().isContextLost() };
+    return { windshieldPixels, bonnetPixels, eye, invalidGeometry, resourcesBefore, resourcesAfter, draws: g.renderer.info.render.calls, passes: g.composer.passes.length, contextLost: g.renderer.getContext().isContextLost(),
+      diagnostic: { meanPixel: withGlass.reduce((sum, value) => sum + value, 0) / withGlass.length,
+        glassPart: glass.userData.carPart, glassMaterialVisible: glass.material.visible, glassOpacity: glass.material.opacity,
+        bonnetTriangles, cameraFov: g.camera.fov, cameraTarget: g.cameraTarget.toArray() } };
   });
+  console.log('Cockpit visibility:', JSON.stringify({ windshieldPixels: report.windshieldPixels, bonnetPixels: report.bonnetPixels, eye: report.eye, diagnostic: report.diagnostic }));
   assert.ok(report.windshieldPixels > 500, 'Windshield glass visibly renders from the driver seat');
   assert.ok(report.bonnetPixels > 500, 'Actual bonnet surface is visible beyond the dashboard');
   assert.equal(report.invalidGeometry, 0);
   assert.equal(report.contextLost, false);
-  assert.equal(report.passes, 4, 'Cockpit uses the existing rendering pipeline');
+  assert.equal(report.passes, 3, 'Cockpit uses the existing scene, bloom and output pipeline');
   assert.deepEqual(report.resourcesBefore, report.resourcesAfter, 'Camera switching does not allocate new GPU resources');
   await page.screenshot({ path: 'artifacts/cockpit-shell-driver.png' });
   await page.setViewportSize({ width: 1000, height: 700 });

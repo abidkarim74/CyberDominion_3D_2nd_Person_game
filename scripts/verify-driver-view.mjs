@@ -8,6 +8,7 @@ try {
  page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text())});
  await page.goto(process.env.GAME_URL||'http://localhost:3000/');
  await page.waitForFunction(()=>!!document.querySelector('canvas')?.__drive,null,{timeout:60000});
+ await page.evaluate(()=>{document.querySelector('canvas').__drive.qualityWarmup=Infinity;});
  await page.getByRole('button',{name:'PLAY',exact:true}).click();await page.waitForTimeout(2500);
  await page.getByRole('button',{name:'Switch to driver view'}).click();await page.waitForTimeout(500);
  const steeringPixels=await page.evaluate(()=>{
@@ -34,7 +35,7 @@ try {
  assert.equal(parked.view,'driver');assert.equal(parked.near,.025);
  assert.ok(parked.maximumCameraMotion<1e-8&&parked.orientationSteady,'Driver camera is steady while parked');
  assert.equal(parked.idleTextureUpdates,0,'Unchanged dashboard avoids texture uploads');
- assert.equal(parked.passes,4,'Driver view reuses the existing render pipeline');
+ assert.equal(parked.passes,3,'Driver view reuses the existing scene, bloom and output pipeline');
  await page.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'c',repeat:true})));
  assert.equal(await page.evaluate(()=>document.querySelector('canvas').__drive.cameraView),'driver','Holding C does not repeatedly switch views');
  const versionBeforeDriving=await page.evaluate(()=>document.querySelector('canvas').__drive.carRig.cockpit.dashboardMap.version),drivingStarted=Date.now();
@@ -67,7 +68,7 @@ try {
  });assert.ok(resources.stable);assert.deepEqual(resources.before,resources.after,'Switching cameras allocates no new GPU resources');
  const regions=[];
  for(const [label,x,z,yaw]of [['central',-22,-22,0],['north',22,-330,Math.PI]]){
-  await page.evaluate(({x,z,yaw})=>{const g=document.querySelector('canvas').__drive;g.reset();g.active=false;g.qualityTimer=-1000;g.carPosition.set(x,.015,z);g.car.position.copy(g.carPosition);g.yaw=yaw;g.car.rotation.y=yaw;g.updateCamera(0,true);},{x,z,yaw});
+  await page.evaluate(({x,z,yaw})=>{const g=document.querySelector('canvas').__drive;g.reset();g.active=false;g.qualityLevel=4;g.resize();g.carPosition.set(x,.015,z);g.car.position.copy(g.carPosition);g.yaw=yaw;g.car.rotation.y=yaw;g.updateCamera(0,true);},{x,z,yaw});
   const views={};
   for(const view of ['chase','driver']){
    await page.evaluate(view=>{const g=document.querySelector('canvas').__drive;if(g.cameraView!==view)g.toggleCameraView();g.updateCamera(0,true);},view);
@@ -80,6 +81,7 @@ try {
    });
   }
   regions.push({label,views});
+  console.log('Camera frame budget:',JSON.stringify({label,views}));
   assert.equal(views.driver.pixelRatio,views.chase.pixelRatio,'Views use the same render resolution');
   assert.ok(views.driver.medianMs<=views.chase.medianMs+6,'Cockpit view stays within the existing frame budget');
  }

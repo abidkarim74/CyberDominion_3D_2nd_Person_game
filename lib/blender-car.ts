@@ -8,6 +8,13 @@ export function addBlenderCarBody(body: THREE.Group, materials: CarMaterials) {
   const headlights: THREE.Mesh[] = [], brakeLights: THREE.Mesh[] = [];
   const textures = new THREE.TextureLoader();
   const materialMap: Record<string, THREE.Material> = { ...materials };
+  // The imported window/door surround is bright aluminum; dark gunmetal made
+  // the curved edge look like an open hole against the pearl-white paint.
+  const bodyTrim = new THREE.MeshStandardMaterial({
+    color: 0xdde1e6, metalness: .45, roughness: .24, envMapIntensity: 1.35,
+  });
+  bodyTrim.name = 'Bugatti / polished aluminum body trim';
+  materialMap.alloy = bodyTrim;
   for (const [key, file] of Object.entries({ badge: 'badge.png', grille: 'grill1.png', grilleFine: 'grill2.png', grilleDense: 'grill3.png', lights: 'lights.png', interior: 'interior.png' })) {
     const map = textures.load(`/models/bugatti/${file}`);
     map.colorSpace = THREE.SRGBColorSpace;
@@ -49,19 +56,23 @@ export function addBlenderCarBody(body: THREE.Group, materials: CarMaterials) {
     geometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(geometry, materialMap[panel.material]);
     mesh.name = panel.name;
+    mesh.userData.carPart = panel.part;
     if (panel.material === 'glass') {
       // The artist's outward-facing windows need a clear inner laminate when
       // viewed from the seat. Keep the exterior tint on its original face.
-      const interiorGlass = new THREE.MeshPhysicalMaterial({
+      // Interior glazing only needs a clear tint and environment sheen. The
+      // exterior retains its physical clearcoat; evaluating a second clearcoat
+      // layer across the driver's windshield adds substantial fragment work.
+      const interiorGlass = new THREE.MeshStandardMaterial({
         color: 0x9eb9c6, side: THREE.BackSide, transparent: true, opacity: .15,
-        metalness: 0, roughness: .2, specularIntensity: .5, depthWrite: false,
-        ior: 1.52, clearcoat: .2, clearcoatRoughness: .25, envMapIntensity: .48,
+        metalness: 0, roughness: .2, depthWrite: false, envMapIntensity: .34,
       });
       interiorGlass.name = 'Bugatti cabin / clear inner laminated windows';
       interiorGlass.userData.cockpitDetail = true;
       interiorGlass.userData.noCastShadow = true;
       const innerWindows = new THREE.Mesh(geometry, interiorGlass);
       innerWindows.name = 'Bugatti cabin / windshield and side glass inner surface';
+      innerWindows.userData.carPart = panel.part;
       innerWindows.userData.cockpitDetail = true;
       body.add(innerWindows);
     }
@@ -75,5 +86,6 @@ export function addBlenderCarBody(body: THREE.Group, materials: CarMaterials) {
     body.add(mesh);
   }
   body.userData.bodyModel = 'Blender / Bugatti Chiron';
+  body.userData.driverDoorHinge = model.driverDoorHinge;
   return { headlights, brakeLights };
 }

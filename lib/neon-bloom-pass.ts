@@ -49,6 +49,7 @@ function material(name: string, uniforms: Record<string, THREE.IUniform>, fragme
 /** Five small HDR draws build glow; the presentation pass adds it to the scene. */
 export class NeonBloomPass extends Pass {
   readonly resolution: THREE.Vector2;
+  private resolutionScale = 1;
   private readonly bright = renderTarget('Neon bloom / quarter-resolution bright areas');
   private readonly medium = renderTarget('Neon bloom / eighth-resolution blur');
   private readonly broad = renderTarget('Neon bloom / sixteenth-resolution blur');
@@ -128,10 +129,18 @@ export class NeonBloomPass extends Pass {
     return this.glow.texture;
   }
 
+  /** 1 retains the original quarter-resolution glow; 2 resolves it at half size. */
+  setQuality(resolutionScale: number) {
+    const scale = Number.isFinite(resolutionScale) ? THREE.MathUtils.clamp(resolutionScale, .5, 2) : 1;
+    if (Math.abs(scale - this.resolutionScale) < .001) return;
+    this.resolutionScale = scale;
+    this.setSize(this.resolution.x, this.resolution.y);
+  }
+
   override setSize(width: number, height: number) {
-    this.resolution.set(width, height);
-    const quarterWidth = Math.max(1, Math.round(width / 4));
-    const quarterHeight = Math.max(1, Math.round(height / 4));
+    this.resolution.set(Math.max(1, width), Math.max(1, height));
+    const quarterWidth = Math.max(1, Math.round(this.resolution.x * this.resolutionScale / 4));
+    const quarterHeight = Math.max(1, Math.round(this.resolution.y * this.resolutionScale / 4));
     const eighthWidth = Math.max(1, Math.round(quarterWidth / 2));
     const eighthHeight = Math.max(1, Math.round(quarterHeight / 2));
     this.bright.setSize(quarterWidth, quarterHeight);

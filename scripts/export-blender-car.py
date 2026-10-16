@@ -18,6 +18,7 @@ allowed={'paint','secondaryPaint','carbon','alloy','glass','amber','trim','redAc
 depsgraph=bpy.context.evaluated_depsgraph_get();buckets={}
 for obj in COLLECTION.objects:
     if obj.type not in {'MESH','CURVE','FONT'}:continue
+    part=obj.get('carPart','body')
     evaluated=obj.evaluated_get(depsgraph);data=evaluated.to_mesh();data.calc_loop_triangles()
     normal_matrix=obj.matrix_world.to_3x3().inverted().transposed()
     for triangle in data.loop_triangles:
@@ -27,7 +28,7 @@ for obj in COLLECTION.objects:
         if (b-a).cross(c-a).length_squared < 1e-16:continue
         material=data.materials[triangle.material_index].name
         if material not in allowed:raise RuntimeError(f'{obj.name}: unsupported game material {material}')
-        bucket=buckets.setdefault(material,{'name':'Blender Chiron / '+material,'material':material,'p':[],'n':[],'u':[],'i':[],'lookup':{}})
+        bucket=buckets.setdefault((part,material),{'name':'Blender Chiron / '+(part+' / ' if part!='body' else '')+material,'part':part,'material':material,'p':[],'n':[],'u':[],'i':[],'lookup':{}})
         for loop in triangle.loops:
             vertex=data.vertices[data.loops[loop].vertex_index];position=game(obj.matrix_world@vertex.co)
             corner_normal=data.corner_normals[loop].vector
@@ -45,8 +46,8 @@ for b in buckets.values():
     if len(b['p'])//3>65535:raise RuntimeError(f"{b['material']}: exceeds 16-bit index budget")
     uv_scale=min(4096,int(32760/max(1,max(abs(v) for v in b['u']))))
     if uv_scale<1:raise RuntimeError(f"{b['material']}: invalid source UV range")
-    meshes.append({'name':b['name'],'material':b['material'],'position':pack(b['p'],'h'),'normal':pack(b['n'],'h'),'uv':pack([round(v*uv_scale) for v in b['u']],'h'),'uvScale':uv_scale,'index':pack(b['i'],'H'),'vertices':len(b['p'])//3,'triangles':len(b['i'])//3})
-asset={'version':1,'source':'artifacts/blender/bugatti-chiron.blend','positionScale':4096,'normalScale':32767,'uvScale':4096,'meshes':meshes}
+    meshes.append({'name':b['name'],'part':b['part'],'material':b['material'],'position':pack(b['p'],'h'),'normal':pack(b['n'],'h'),'uv':pack([round(v*uv_scale) for v in b['u']],'h'),'uvScale':uv_scale,'index':pack(b['i'],'H'),'vertices':len(b['p'])//3,'triangles':len(b['i'])//3})
+asset={'version':2,'source':'artifacts/blender/bugatti-chiron.blend','positionScale':4096,'normalScale':32767,'uvScale':4096,'driverDoorHinge':list(COLLECTION.get('driverDoorHinge',(-.86,.50,-.82))),'meshes':meshes}
 (ROOT/'lib'/'blender-car-model.json').write_text(json.dumps(asset,separators=(',',':')))
 print('Chiron body baked:',sum(m['triangles'] for m in meshes),'triangles;',len(meshes),'material batches',flush=True)
 bpy.ops.object.select_all(action='DESELECT')

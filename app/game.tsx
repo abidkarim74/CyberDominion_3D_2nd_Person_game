@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { MAX_NITRO_SPEED_KMH } from '@/lib/vehicle-dynamics';
 import CityMinimap, { type CityMinimapHandle } from '@/components/city-minimap';
+import GraphicsSettings from '@/components/graphics-settings';
+import { GRAPHICS_PRESETS, type GraphicsStatus } from '@/lib/graphics-quality';
 import { NeonCityGame, type DriveTelemetry, type CameraView } from '@/lib/neon-city';
 
 const INITIAL_TELEMETRY: DriveTelemetry = {
@@ -20,6 +22,8 @@ export default function Game() {
   const [started, setStarted] = useState(false);
   const [cameraView, setCameraView] = useState<CameraView>('chase');
   const [telemetry, setTelemetry] = useState(INITIAL_TELEMETRY);
+  const [graphicsOpen, setGraphicsOpen] = useState(false);
+  const [graphicsStatus, setGraphicsStatus] = useState<GraphicsStatus | null>(null);
   const person = telemetry.person;
   const personMode = person?.mode ?? 'driving';
   const onFoot = personMode !== 'driving';
@@ -40,8 +44,10 @@ export default function Game() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const game = new NeonCityGame(canvas, setTelemetry, setCameraView,
-      (x, z, yaw, traffic, parked) => minimapRef.current?.update(x, z, yaw, traffic, parked));
+      (x, z, yaw, traffic, parked) => minimapRef.current?.update(x, z, yaw, traffic, parked),
+      { onGraphicsStatus: setGraphicsStatus });
     gameRef.current = game;
+    setGraphicsStatus(game.getGraphicsStatus());
     // Local QA can inspect render/physics state without shipping a debug UI.
     if (import.meta.env.DEV) Object.assign(canvas, { __drive: game, __audio: () => game.audioDiagnostics() });
     return () => {
@@ -51,6 +57,15 @@ export default function Game() {
       gameRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    gameRef.current?.setDriving(started && !graphicsOpen);
+  }, [started, graphicsOpen]);
+
+  const closeGraphics = () => {
+    setGraphicsOpen(false);
+    canvasRef.current?.focus({ preventScroll: true });
+  };
 
   const play = () => {
     gameRef.current?.setDriving(true);
@@ -71,6 +86,28 @@ export default function Game() {
         <span className="city-ident-mark">NN<span>07</span></span>
         <span className="city-ident-copy">NOCTURNE<span>COASTAL GRID / NIGHT DRIVE</span></span>
       </div>
+
+      <button
+        type="button"
+        className={`graphics-toggle${graphicsStatus?.preset === 'ultra' ? ' graphics-toggle-ultra' : ''}`}
+        aria-haspopup="dialog"
+        aria-expanded={graphicsOpen}
+        aria-controls={graphicsOpen ? 'graphics-settings' : undefined}
+        disabled={!graphicsStatus}
+        onClick={() => setGraphicsOpen(true)}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h16" /><circle cx="9" cy="5" r="2" /><circle cx="16" cy="12" r="2" /><circle cx="8" cy="19" r="2" /></svg>
+        <span>GRAPHICS<span className="graphics-toggle-preset">{graphicsStatus ? `${graphicsStatus.automatic ? 'AUTO · ' : ''}${GRAPHICS_PRESETS[graphicsStatus.preset].label}` : 'DETECTING…'}</span></span>
+      </button>
+
+      {graphicsOpen && graphicsStatus && (
+        <GraphicsSettings
+          status={graphicsStatus}
+          onQualityChange={(quality) => gameRef.current?.setGraphicsQuality(quality)}
+          onAutomaticChange={(enabled) => gameRef.current?.setAutomaticGraphics(enabled)}
+          onClose={closeGraphics}
+        />
+      )}
 
       <section
         className={`start-screen${started ? ' start-screen-dismissed' : ''}`}
