@@ -30,14 +30,14 @@ try {
       mode: g.person.mode, lights: ambience.lights.map(light => light.intensity),
       guides: ambience.ledMeshes.filter(mesh => !mesh.material.transparent).map(mesh => mesh.material.color.r) });
     try {
-      step(); sample('entry'); step(89); sample('before-delay'); step(1); sample('at-delay');
+      step(); sample('entry'); step(59); sample('before-delay'); step(1); sample('at-delay');
       step(15); sample('fade-quarter'); step(15); sample('fade-half'); step(30); sample('fully-on');
       const exitAccepted = g.interactVehicle(); step(24); sample('exit-faded');
       for (let i = 0; i < 600 && g.person.mode !== 'walking'; i++) step();
       const walking = g.person.mode;
       const entryAccepted = g.interactVehicle();
       for (let i = 0; i < 600 && g.person.mode !== 'driving'; i++) step();
-      sample('reseated'); step(90); sample('reentry-delay'); step(30); sample('reentry-half'); step(30); sample('reentry-on');
+      sample('reseated'); step(60); sample('reentry-delay'); step(30); sample('reentry-half'); step(30); sample('reentry-on');
       g.pressed.add('a'); const turning = [];
       for (let i = 0; i < 24; i++) { step(); turning.push({ angle: cockpit.steering.angle, velocity: cockpit.steering.velocity }); }
       g.pressed.delete('a'); g.pressed.add('d'); const reversing = [];

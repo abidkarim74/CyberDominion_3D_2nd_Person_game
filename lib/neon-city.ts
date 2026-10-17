@@ -339,7 +339,11 @@ export class NeonCityGame {
   private keyLight!: THREE.DirectionalLight;
   private shadowFrame = 0;
   private readonly shadowPosition = new THREE.Vector3(Infinity, Infinity, Infinity);
+  private readonly shadowCarPosition = new THREE.Vector3(Infinity, Infinity, Infinity);
+  private readonly shadowBodyPosition = new THREE.Vector3(Infinity, Infinity, Infinity);
+  private readonly shadowBodyRotation = new THREE.Quaternion();
   private shadowYaw = Infinity;
+  private shadowDoorAngle = Infinity;
   private updateCityVisibility!: ReturnType<typeof cityVisibility>;
   private readonly pressed = new Set<string>();
   private readonly audio = new CityAudio();
@@ -1830,15 +1834,33 @@ export class NeonCityGame {
 
     this.presentationPass.uniforms.strength.value = this.lastTelemetry.boosting ? speedRatio * .006 : 0;
     this.presentationPass.uniforms.bloomEnabled.value = this.bloomPass.enabled ? 1 : 0;
-    this.keyLight.position.set(focus.x + 22, focus.y + 38, focus.z + 16);
-    this.keyLight.target.position.copy(focus);
-    const shadowChanged = this.shadowPosition.distanceToSquared(focus) > .0625 || Math.abs(this.shadowYaw - this.yaw) > .025 ||
+    // A cached shadow contains the car's old world-space silhouette. Reusing
+    // it while the rendered car moves leaves a detached shadow that disappears
+    // and jumps back at the next capture, especially on the slower presets.
+    const carShadowChanged = this.shadowCarPosition.distanceToSquared(this.car.position) > 1e-10 ||
+      this.shadowBodyPosition.distanceToSquared(this.carRig.body.position) > 1e-10 ||
+      1 - Math.abs(this.shadowBodyRotation.dot(this.carRig.body.quaternion)) > 1e-12 ||
+      Math.abs(this.shadowYaw - this.car.rotation.y) > 1e-6 ||
+      Math.abs(this.shadowDoorAngle - this.carRig.driverDoor.rotation.y) > 1e-6;
+    const shadowChanged = this.shadowPosition.distanceToSquared(focus) > .0625 ||
       this.person.mode !== 'driving' ||
       this.active && this.pedestrians.visible > 0 ||
       this.active && this.traffic.cars.some(car => car.rig.car.visible && car.motion.velocity.lengthSq() > .01);
     const shadowInterval = graphicsProfile.shadowInterval + this.qualityLevel * 3;
-    this.renderer.shadowMap.needsUpdate = this.renderer.shadowMap.enabled && this.shadowFrame++ % shadowInterval === 0 && shadowChanged;
-    if (this.renderer.shadowMap.needsUpdate) { this.shadowPosition.copy(focus); this.shadowYaw = this.yaw; }
+    const scheduledShadow = this.shadowFrame++ % shadowInterval === 0 && shadowChanged;
+    this.renderer.shadowMap.needsUpdate = this.renderer.shadowMap.enabled &&
+      (!Number.isFinite(this.shadowPosition.x) || carShadowChanged || scheduledShadow);
+    if (this.renderer.shadowMap.needsUpdate) {
+      // Keep the light and its cached projection together between captures.
+      this.keyLight.position.set(focus.x + 22, focus.y + 38, focus.z + 16);
+      this.keyLight.target.position.copy(focus);
+      this.shadowPosition.copy(focus);
+      this.shadowCarPosition.copy(this.car.position);
+      this.shadowBodyPosition.copy(this.carRig.body.position);
+      this.shadowBodyRotation.copy(this.carRig.body.quaternion);
+      this.shadowYaw = this.car.rotation.y;
+      this.shadowDoorAngle = this.carRig.driverDoor.rotation.y;
+    }
     this.renderer.info.reset();
     this.drivingMirrors.update(this.renderer, this.scene, this.camera, this.elapsed,
       this.cameraView === 'driver' && this.person.mode === 'driving');

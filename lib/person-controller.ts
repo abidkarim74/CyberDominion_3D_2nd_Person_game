@@ -138,7 +138,7 @@ export class PersonController {
   private readonly diagnosticState: {
     asset: string; animations: string[]; height: number; scale: number; meshes: number; triangles: number;
     collisionRadius: number; transitionSeconds: number; loadingError?: string;
-  } = { asset: '/models/person/person.glb?v=original-blender-v1', animations: [], height: 0, scale: PERSON_SCALE, meshes: 0,
+  } = { asset: '/models/person/person-detailed-hands.glb?v=articulated-hands-v1', animations: [], height: 0, scale: PERSON_SCALE, meshes: 0,
     triangles: 0, collisionRadius: RADIUS, transitionSeconds: TRANSITION_SECONDS };
   private readonly ankleFloor = (ankle: THREE.Vector3, side: 'left' | 'right') => {
     const rest = this.footRest.get(side), contact = this.footContacts[side];

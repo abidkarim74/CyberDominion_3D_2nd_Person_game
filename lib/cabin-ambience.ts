@@ -166,7 +166,7 @@ export function addCabinAmbience(cabin: THREE.Group, dashboard: THREE.Group) {
     }
     if (occupied) {
       seatedElapsed += dt;
-      const progress = THREE.MathUtils.clamp((seatedElapsed - 1.5) / 1, 0, 1);
+      const progress = THREE.MathUtils.clamp((seatedElapsed - 1) / 1, 0, 1);
       apply(progress * progress * (3 - 2 * progress));
     } else {
       exitElapsed += dt;

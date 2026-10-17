@@ -1,14 +1,15 @@
 import * as THREE from 'three';
 
 type MotionJoint = { bone: THREE.Bone; base: THREE.Quaternion; modified: boolean };
-type FingerJoint = MotionJoint & { axis: THREE.Vector3; angle: number };
+type FingerJoint = MotionJoint & { axis: THREE.Vector3; angle: number; opposition?: THREE.Quaternion };
 export type HandContact = { position: THREE.Vector3; normal: THREE.Vector3; up: THREE.Vector3; weight: number };
 export type HandContacts = Partial<Record<'left' | 'right', HandContact>>;
 type Arm = {
   side: 'left' | 'right'; sign: number;
   shoulder?: MotionJoint; upper: MotionJoint; lower: MotionJoint; hand: MotionJoint;
   joints: MotionJoint[]; fingers: FingerJoint[];
-  palm: THREE.Vector3; handBasisInverse: THREE.Quaternion;
+  palm: THREE.Vector3; grip: THREE.Vector3; contact: THREE.Vector3; handBasisInverse: THREE.Quaternion;
+  forearmTwist: number;
   target: THREE.Vector3; actual: THREE.Vector3; error: number;
 };
 
@@ -65,6 +66,9 @@ export class PersonSteeringMotion {
       this.normal.crossVectors(this.across, this.long).normalize();
       const palmLength = middle?.position.length() ?? 20;
       const palm = this.long.clone().multiplyScalar(palmLength * .57).addScaledVector(this.normal, palmLength * .095);
+      // The leather meets the proximal finger pads, near the knuckle line.
+      // Keep the broad palm centre separately for pushing on the open door.
+      const grip = this.long.clone().multiplyScalar(palmLength * .90).addScaledVector(this.normal, palmLength * .095);
       this.basis.makeBasis(this.across, this.long, this.normal);
       const handBasisInverse = new THREE.Quaternion().setFromRotationMatrix(this.basis).invert();
       const shoulderBone = find(`${side}shoulder`);
@@ -72,6 +76,7 @@ export class PersonSteeringMotion {
       const u = joint(upper), l = joint(lower), h = joint(hand);
       const fingers: FingerJoint[] = [];
       hand.getWorldQuaternion(this.worldRotation);
+      const palmLong = this.long.clone().applyQuaternion(this.worldRotation);
       this.normal.applyQuaternion(this.worldRotation);
       for (const [name, bone] of bones) {
         const match = name.match(new RegExp(`${side}hand(index|middle|ring|pinky|thumb)([123])$`));
@@ -84,13 +89,24 @@ export class PersonSteeringMotion {
         const stage = Number(match[2]);
         // The fingers wrap over the front of the 38mm leather rim; the thumb
         // closes gently against its inner edge rather than forming a full fist.
-        const angle = match[1] === 'thumb' ? (stage === 1 ? .28 : .55)
-          : stage === 1 ? .56 : stage === 2 ? 1.05 : .82;
-        fingers.push({ ...joint(bone), axis, angle });
+        // The shorter outer fingers close farther than the index. Independent
+        // MCP/PIP/DIP flexion leaves distinct knuckles instead of a flat fist.
+        const flexion: Record<string, readonly number[]> = {
+          index: [.48, 1.04, .73], middle: [.60, 1.13, .79],
+          ring: [.68, 1.16, .83], pinky: [.74, 1.12, .86], thumb: [.35, .64, .32],
+        };
+        const angle = flexion[match[1]][stage - 1];
+        // Oppose the thumb across the palm so its pad closes around the inner
+        // leather edge. Keep the end joint relaxed rather than hooking it.
+        const opposition = match[1] === 'thumb' && stage === 1
+          ? new THREE.Quaternion().setFromAxisAngle(palmLong.clone().applyQuaternion(this.parentRotation), side === 'left' ? .20 : -.20)
+          : undefined;
+        fingers.push({ ...joint(bone), axis, angle, opposition });
       }
       const joints = [...(shoulder ? [shoulder] : []), u, l, h, ...fingers];
       this.arms.push({ side, sign: side === 'left' ? -1 : 1, shoulder, upper: u, lower: l, hand: h,
-        joints, fingers, palm, handBasisInverse, target: new THREE.Vector3(), actual: new THREE.Vector3(), error: 0 });
+        joints, fingers, palm, grip, contact: new THREE.Vector3(), handBasisInverse, forearmTwist: 0,
+        target: new THREE.Vector3(), actual: new THREE.Vector3(), error: 0 });
     }
   }
 
@@ -123,13 +139,15 @@ export class PersonSteeringMotion {
       // Grip slightly above nine and three o'clock. Local targets inherit the
       // actual wheel's steering, cabin pitch/roll, and vehicle world transform.
       arm.target.set(arm.sign * .155, .025, .019).applyMatrix4(this.steeringWheel.matrixWorld);
-      this.long.set(-arm.sign * .12, .85, -.50).normalize().applyQuaternion(this.wheelRotation);
+      // Aim the fingers across the leather instead of along the rim. This
+      // exposes their separate knuckles while maintaining a relaxed wrist.
+      this.long.set(-arm.sign * .55, .55, -.62).normalize().applyQuaternion(this.wheelRotation);
       this.normal.set(-arm.sign * .38, -.10, -1).normalize().applyQuaternion(this.wheelRotation);
+      const contactInfluence = contactWeight / (contactWeight + wheelWeight);
       if (contact && contactWeight > 0) {
-        const influence = contactWeight / (contactWeight + wheelWeight);
-        arm.target.lerp(contact.position, influence);
-        this.long.lerp(contact.up, influence).normalize();
-        this.normal.lerp(contact.normal, influence).normalize();
+        arm.target.lerp(contact.position, contactInfluence);
+        this.long.lerp(contact.up, contactInfluence).normalize();
+        this.normal.lerp(contact.normal, contactInfluence).normalize();
       }
       this.normal.addScaledVector(this.long, -this.normal.dot(this.long)).normalize();
       this.across.crossVectors(this.long, this.normal).normalize();
@@ -137,7 +155,8 @@ export class PersonSteeringMotion {
       this.basis.makeBasis(this.across, this.long, this.normal);
       this.handRotation.setFromRotationMatrix(this.basis).multiply(arm.handBasisInverse);
       hand.getWorldScale(this.scale);
-      this.offset.copy(arm.palm).multiply(this.scale).applyQuaternion(this.handRotation);
+      arm.contact.copy(arm.grip).lerp(arm.palm, contactInfluence);
+      this.offset.copy(arm.contact).multiply(this.scale).applyQuaternion(this.handRotation);
       this.targetWrist.copy(arm.target).sub(this.offset);
       upper.getWorldPosition(this.shoulder); lower.getWorldPosition(this.elbow); hand.getWorldPosition(this.wrist);
       const upperLength = this.shoulder.distanceTo(this.elbow), lowerLength = this.elbow.distanceTo(this.wrist);
@@ -185,18 +204,28 @@ export class PersonSteeringMotion {
       this.from.subVectors(this.wrist, this.elbow); this.to.subVectors(this.targetWrist, this.elbow);
       this.aim(lower, this.from, this.to);
       lower.updateWorldMatrix(true, true);
+      // Pronation belongs along the forearm, rather than entirely at the
+      // wrist. Leaving the whole roll on the hand collapses the blended skin
+      // into a thin, twisted waist, especially on the right-hand grip.
+      this.distributeWristTwist(arm);
       hand.parent!.getWorldQuaternion(this.parentRotation);
       hand.quaternion.copy(this.parentRotation.invert()).multiply(this.handRotation).normalize();
       for (const finger of arm.fingers) {
         const curl = 1 - .60 * contactWeight / Math.max(.000001, contactWeight + wheelWeight);
         this.rotation.setFromAxisAngle(finger.axis, finger.angle * curl);
-        finger.bone.quaternion.copy(finger.base).multiply(this.rotation).normalize();
+        finger.bone.quaternion.copy(finger.base);
+        if (finger.opposition) {
+          // Door contacts relax this same anatomical grip during seat transfer.
+          this.handRotation.copy(this.identity).slerp(finger.opposition, curl);
+          finger.bone.quaternion.multiply(this.handRotation);
+        }
+        finger.bone.quaternion.multiply(this.rotation).normalize();
       }
       // Blend complete local rotations to/from the authored enter/exit pose.
       // All sources are saved before any parent changes its children.
       if (blend < 1) for (const joint of arm.joints) joint.bone.quaternion.slerp(joint.base, 1 - blend);
       upper.parent!.updateWorldMatrix(true, true);
-      arm.actual.copy(arm.palm).applyMatrix4(hand.matrixWorld);
+      arm.actual.copy(arm.contact).applyMatrix4(hand.matrixWorld);
       arm.error = arm.actual.distanceTo(arm.target);
     }
   }
@@ -210,6 +239,32 @@ export class PersonSteeringMotion {
   private aim(bone: THREE.Bone, from: THREE.Vector3, to: THREE.Vector3) {
     this.rotation.setFromUnitVectors(from.normalize(), to.normalize());
     this.rotateWorld(bone, this.rotation);
+  }
+
+  private distributeWristTwist(arm: Arm) {
+    const lower = arm.lower.bone, hand = arm.hand.bone;
+    this.axis.copy(hand.position).normalize();
+    lower.getWorldQuaternion(this.parentRotation);
+    this.worldRotation.copy(this.parentRotation).invert().multiply(this.handRotation);
+    this.rotation.copy(arm.hand.base).invert();
+    this.worldRotation.multiply(this.rotation);
+    // Extract only roll around the elbow-to-wrist axis. Rotating around this
+    // axis leaves the solved wrist position and arm lengths unchanged.
+    const projection = this.worldRotation.x * this.axis.x + this.worldRotation.y * this.axis.y + this.worldRotation.z * this.axis.z;
+    const direction = this.worldRotation.w < 0 ? -1 : 1;
+    const twist = 2 * Math.atan2(projection * direction, this.worldRotation.w * direction);
+    // Follow the continuous roll through the quaternion's +/-pi boundary;
+    // choosing a new shortest arc each frame would make the forearm flip.
+    const change = twist - arm.forearmTwist;
+    arm.forearmTwist += Math.atan2(Math.sin(change), Math.cos(change));
+    // Twist becomes ambiguous if an extreme contact folds the hand back
+    // against the forearm. Fade that singular case and bound pronation.
+    const alignment = projection * projection + this.worldRotation.w * this.worldRotation.w;
+    const influence = THREE.MathUtils.smoothstep(alignment, .25, .75);
+    const pronation = THREE.MathUtils.clamp(arm.forearmTwist, -1.6, 1.6) * .85 * influence;
+    this.rotation.setFromAxisAngle(this.axis, pronation);
+    lower.quaternion.multiply(this.rotation).normalize();
+    lower.updateWorldMatrix(true, true);
   }
 
   private rotateWorld(bone: THREE.Bone, delta: THREE.Quaternion) {

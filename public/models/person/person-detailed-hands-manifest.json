@@ -1,0 +1,37 @@
+{
+  "name": "Original civilian / refined driver hands",
+  "source": "person.blend",
+  "sourceSha256": "0d44071b9fe0adae7fa3abe7cbf8bb71f92665d0e2c7f2a02a52850f91b89a36",
+  "url": "/models/person/person-detailed-hands.glb",
+  "skinImages": [
+    {
+      "image": "Remy_Body_Diffuse",
+      "size": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "image": "Remy_Body_Normal",
+      "size": [
+        2048,
+        2048
+      ]
+    }
+  ],
+  "addedBodyVertices": 3992,
+  "nailVertices": 490,
+  "meshes": 8,
+  "triangles": 43980,
+  "glbBytes": 3864536,
+  "clips": [
+    "EnterCar",
+    "ExitCar",
+    "Idle",
+    "Run",
+    "Seated",
+    "Walk"
+  ],
+  "bones": 67,
+  "sourceUnchanged": true
+}
