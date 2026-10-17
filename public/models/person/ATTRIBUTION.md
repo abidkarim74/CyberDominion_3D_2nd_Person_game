@@ -9,3 +9,5 @@ The game character is **Remy**, an Adobe Mixamo human model, customized and anim
 - The source reference's Three.js MIT notice is retained in `THREEJS-LICENSE.txt`.
 
 The original source files and editable packed Blender scene are retained locally under `artifacts/blender/person*`. Rebuild with Blender 5.2 using `scripts/build-blender-person.py`. The shipped compact model is `person.glb`; technical dimensions, bones and clip durations are listed in `person-manifest.json`.
+
+The playable winter variant, `person-winter.glb`, retains this character's face, skeleton, and six animations. Its fitted insulated parka, knit headwear and scarf, gloves, winter trousers, and boots are authored for this game with `scripts/build-player-winter.py`. Garment textures, quilting, seams, and hardware are generated locally. Its editable scene and preview renders are retained under `artifacts/blender/person-winter*`; the exported asset details are recorded in `person-winter-manifest.json`.

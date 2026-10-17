@@ -9,7 +9,7 @@ type MaskedMesh = {
 const HEAD_WEIGHT_CUTOFF = .5;
 const normalizedName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-/** Shows the original animated body from the seat without looking through its head. */
+/** Keep the rigged clothes and hands in view while clearing the seated camera's head volume. */
 export class PersonDriverVisibility {
   private readonly masked: MaskedMesh[] = [];
   private readonly hidden: { mesh: THREE.Mesh; visible: boolean }[] = [];
@@ -24,12 +24,14 @@ export class PersonDriverVisibility {
     model.traverse(object => {
       if (!(object instanceof THREE.Mesh)) return;
       const name = normalizedName(object.name);
-      if (/(?:hair|eyes|eyelashes)$/.test(name)) {
+      if (/(?:hair|eyes|eyelashes)$/.test(name) || object.userData.first_person_hidden === true) {
         this.hidden.push({ mesh: object, visible: object.visible });
         this.diagnostics.hiddenMeshes.push(object.name);
         return;
       }
-      if (!(object instanceof THREE.SkinnedMesh) || !/(?:body|tops)$/.test(name)) return;
+      // Winter headwear and high collars are separate skinned garments. Use
+      // their bone weights so the same mask covers every fitted layer.
+      if (!(object instanceof THREE.SkinnedMesh)) return;
       const driver = this.withoutHead(object);
       if (!driver) return;
       this.masked.push({ mesh: object, original: object.geometry, driver });
