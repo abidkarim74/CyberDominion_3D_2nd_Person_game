@@ -57,18 +57,28 @@ export function stepVehicle(motion: VehicleMotion, input: VehicleInput, contacts
   // turn radius and braking budget together, keeping tight brake turns stable.
   const playerSteeringAssist = clamp(input.steeringAssist ?? 1, 1, 2);
   const assistedForward = playerSteeringAssist > 1 && longitudinal > 0;
+  // Keyboard steering stays nimble around town, then progressively softens
+  // from 80 to 180 km/h. Traffic and intentional handbrake slides keep their
+  // existing response. Smoothstep avoids a handling change at either boundary.
+  const fastSteering = assistedForward && !input.handbrake ? clamp((longitudinal - 80 / 3.6) / (100 / 3.6), 0, 1) : 0;
+  const highSpeedSteering = fastSteering * fastSteering * (3 - 2 * fastSteering);
   const playerSteeringGain = 1 + (playerSteeringAssist - 1) * roadGrip * clamp((longitudinal - 6) / 16, 0, 1);
   const roadSteeringGain = !input.handbrake ? (1 + 1.3 * roadGrip * clamp((Math.abs(longitudinal) - 8) / 35, 0, 1)) * playerSteeringGain : 1;
   const tireCompliance = MASS * .5 / (CORNERING_STIFFNESS * clamp((frontGrip + rearGrip) / (2 * .95), .25, 1.4)) * (1 - 1 / REAR_CORNERING_BIAS);
   const turningScale = WHEELBASE + longitudinal * longitudinal * tireCompliance * (pedal > 0 ? roadGrip : 1);
   // Add road-speed authority progressively so sustained low-speed turns stay planted.
   const turnAuthority = pedal > 0 ? .46 + .36 * roadGrip : .94 + .42 * roadGrip * clamp((Math.abs(longitudinal) - 10) / 10, 0, 1);
-  const steeringLimit = Math.atan(Math.min(frontGrip, rearGrip) * GRAVITY * turningScale * turnAuthority * roadSteeringGain / Math.max(1, longitudinal * longitudinal));
+  const turnAcceleration = Math.min(frontGrip, rearGrip) * GRAVITY * turnAuthority * roadSteeringGain;
+  const stableTurnAcceleration = Math.min(turnAcceleration, Math.min(frontGrip, rearGrip) * GRAVITY * 1.15);
+  const steeringLimit = Math.atan((turnAcceleration + (stableTurnAcceleration - turnAcceleration) * highSpeedSteering) * turningScale / Math.max(1, longitudinal * longitudinal));
   // Avoid an abrupt full-lock turn as a service-brake stop reaches walking speed.
   const mechanicalSteer = (pedal > 0 && !input.handbrake ? .4 + .36 * roadGrip : .82) / (1 + Math.abs(longitudinal) / 65);
   const targetSteer = input.steer * (input.handbrake ? mechanicalSteer : Math.min(mechanicalSteer, steeringLimit));
-  // Quicker wheel movement makes taps and direction changes useful immediately.
-  const steerResponse = input.steer === 0 || input.steer * motion.steeringAngle < 0 ? 180 : 140;
+  // At speed, build, reverse and release steering over a short continuous arc
+  // instead of snapping between full left/right lock in one physics step.
+  const baseSteerResponse = input.steer === 0 || input.steer * motion.steeringAngle < 0 ? 180 : 140;
+  const fastSteerResponse = input.steer === 0 ? 14 : 10;
+  const steerResponse = 1 / ((1 - highSpeedSteering) / baseSteerResponse + highSpeedSteering / fastSteerResponse);
   motion.steeringAngle += (targetSteer - motion.steeringAngle) * (1 - Math.exp(-dt * steerResponse));
   const steer = motion.steeringAngle, cosine = Math.cos(steer), sine = Math.sin(steer);
   const braking = pedal > 0 || input.handbrake;
@@ -148,7 +158,9 @@ export function stepVehicle(motion: VehicleMotion, input: VehicleInput, contacts
     // Keyboard corrections need to build yaw within the same short input, even
     // under throttle and settle promptly after release. Service-brake turns
     // keep a quick rolling response while reserving grip for deceleration.
-    const response = (pedal > 0 ? 42 * .65 + 92.7 * roadGrip : input.steer === 0 ? 180 : 140) * roadGrip * rearRolling * clamp((speed - 2) / 2, 0, 1);
+    const baseYawResponse = pedal > 0 ? 42 * .65 + 92.7 * roadGrip : input.steer === 0 ? 180 : 140;
+    const fastYawResponse = input.steer === 0 ? 16 : 12;
+    const response = 1 / ((1 - highSpeedSteering) / baseYawResponse + highSpeedSteering / fastYawResponse) * roadGrip * rearRolling * clamp((speed - 2) / 2, 0, 1);
     // ABS uses some of the tires' cornering authority. Account for that tire
     // deflection before asking the body to yaw faster than its momentum can turn.
     const rollingScale = turningScale + (pedal > 0 ? longitudinal * longitudinal * tireCompliance * 3 * (1 - roadGrip) : 0);

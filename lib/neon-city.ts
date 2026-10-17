@@ -32,6 +32,8 @@ import { GRAPHICS_PRESETS, isGraphicsQuality, loadGraphicsPreference, recommendG
 
 export type CameraView = 'chase' | 'driver' | 'orbit' | 'person';
 
+const VEHICLE_FIXED_STEP = 1 / 120;
+
 export type DriveTelemetry = {
   speed: number;
   boost: number;
@@ -349,6 +351,10 @@ export class NeonCityGame {
   private readonly right = new THREE.Vector3();
   private readonly carPosition = new THREE.Vector3(PLAYER_SPAWN.x, 0.015, PLAYER_SPAWN.z);
   private readonly previousPosition = new THREE.Vector3();
+  private readonly physicsPreviousPosition = this.carPosition.clone();
+  private physicsPreviousYaw = 0;
+  private readonly cameraAnchor = this.carPosition.clone();
+  private readonly cameraTravel = new THREE.Vector3();
   private readonly colliders: BuildingCollider[] = [];
   private readonly coveredRoads: CoveredRoad[] = [{ x: -22, z: 88, hx: 9.5, hz: 13, ceiling: 11, label: 'CENTRAL TUNNEL' }];
   private readonly neonSigns: THREE.Mesh[] = [];
@@ -1030,6 +1036,7 @@ export class NeonCityGame {
     this.pressed.clear();
     this.previousTime = 0;
     this.physicsAccumulator = 0;
+    this.syncVehiclePresentation();
     if (active) {
       this.audio.start();
       this.renderer.domElement.focus({ preventScroll: true });
@@ -1178,8 +1185,14 @@ export class NeonCityGame {
       this.reflections.invalidate();
       this.shadowPosition.set(Infinity, Infinity, Infinity); this.shadowFrame = 0;
     }
-    this.forward.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    // Follow the same interpolated pose as the car, including on frames with
+    // no physics tick. Integrating velocity here made the chase camera move
+    // ahead and correct backwards whenever render and physics timing differed.
+    this.cameraTravel.copy(this.car.position).sub(this.cameraAnchor);
+    this.cameraAnchor.copy(this.car.position);
+    const renderYaw = this.car.rotation.y;
+    this.forward.set(-Math.sin(renderYaw), 0, -Math.cos(renderYaw));
+    this.right.set(Math.cos(renderYaw), 0, -Math.sin(renderYaw));
     const speedRatio = Math.min(this.velocity.length() / 76, 1);
     const driver = this.cameraView === 'driver';
     if (this.cameraView === 'person') {
@@ -1208,9 +1221,9 @@ export class NeonCityGame {
       const zoom = (this.pressed.has('-') ? 1 : 0) - (this.pressed.has('+') || this.pressed.has('=') ? 1 : 0);
       this.orbitDistance = THREE.MathUtils.clamp(this.orbitDistance * Math.exp(zoom * delta), 3.8, 12);
       const distance = this.orbitDistance * Math.max(1, 1 / this.camera.aspect);
-      const angle = this.orbitAzimuth + this.yaw;
+      const angle = this.orbitAzimuth + renderYaw;
       const horizontal = Math.cos(this.orbitElevation) * distance;
-      this.cameraTarget.copy(this.carPosition); this.cameraTarget.y += .76;
+      this.cameraTarget.copy(this.car.position); this.cameraTarget.y += .76;
       this.desiredCamera.set(this.cameraTarget.x + Math.sin(angle) * horizontal,
         this.cameraTarget.y + Math.sin(this.orbitElevation) * distance, this.cameraTarget.z + Math.cos(angle) * horizontal);
       // A small camera sphere stops at nearby walls without scanning the whole city.
@@ -1231,20 +1244,18 @@ export class NeonCityGame {
       this.camera.position.copy(this.carRig.cockpit.eye).applyMatrix4(this.carRig.body.matrixWorld);
       this.cameraOffset.set(0, 0, -1).transformDirection(this.carRig.body.matrixWorld);
       this.camera.up.set(0, 1, 0).transformDirection(this.carRig.body.matrixWorld);
-      this.cameraTarget.copy(this.camera.position).addScaledVector(this.cameraOffset, 30)
-        .addScaledVector(this.right, -this.steerInput * speedRatio * .45);
+      this.cameraTarget.copy(this.camera.position).addScaledVector(this.cameraOffset, 30);
       // Include the closer steering rim and both gripping hands below the road.
       this.cameraTarget.addScaledVector(this.camera.up, -11.0);
     } else {
-      this.cameraTarget.copy(this.carPosition).addScaledVector(this.forward, 2.2);
+      this.cameraTarget.copy(this.car.position).addScaledVector(this.forward, 2.2);
       this.cameraTarget.y += 1.3;
-      this.desiredCamera.copy(this.carPosition)
-        .addScaledVector(this.forward, -(8.4 + speedRatio * 1.6))
-        .addScaledVector(this.right, -this.steerInput * speedRatio * (this.lastTelemetry.drifting ? .42 : .14));
-      this.desiredCamera.y += 3.1 + speedRatio * .45 + Math.sin(this.elapsed * 19) * speedRatio * (this.lastTelemetry.boosting ? .08 : .018);
+      this.desiredCamera.copy(this.car.position)
+        .addScaledVector(this.forward, -(8.4 + speedRatio * 1.6));
+      this.desiredCamera.y += 3.1 + speedRatio * .45;
       if (snap) this.camera.position.copy(this.desiredCamera);
       else {
-        this.camera.position.addScaledVector(this.velocity, delta);
+        this.camera.position.add(this.cameraTravel);
         this.camera.position.lerp(this.desiredCamera, 1 - Math.exp(-delta * 5.3));
       }
     }
@@ -1266,6 +1277,7 @@ export class NeonCityGame {
     this.car.rotation.set(0, 0, 0);
     this.carRig.body.rotation.set(0, 0, 0);
     this.carRig.body.position.y = 0;
+    this.syncVehiclePresentation();
     this.person.resetDriving(this.carPosition, this.yaw);
     this.carRig.driverDoor.rotation.y = 0;
     this.lastPersonMode = 'driving';
@@ -1395,6 +1407,23 @@ export class NeonCityGame {
     this.onGraphicsStatus(this.getGraphicsStatus());
   }
 
+  private syncVehiclePresentation() {
+    this.physicsPreviousPosition.copy(this.carPosition);
+    this.physicsPreviousYaw = this.yaw;
+    this.car.position.copy(this.carPosition);
+    this.car.rotation.y = this.yaw;
+  }
+
+  private updateVehiclePresentation() {
+    const alpha = THREE.MathUtils.clamp(this.physicsAccumulator / VEHICLE_FIXED_STEP, 0, 1);
+    this.car.position.lerpVectors(this.physicsPreviousPosition, this.carPosition, alpha);
+    // Suspension already advances at render cadence; only planar physics needs
+    // interpolation. Wrap the angle so a heading boundary cannot spin the body.
+    this.car.position.y = this.carPosition.y;
+    const yawDelta = Math.atan2(Math.sin(this.yaw - this.physicsPreviousYaw), Math.cos(this.yaw - this.physicsPreviousYaw));
+    this.car.rotation.y = this.physicsPreviousYaw + yawDelta * alpha;
+  }
+
   private updateDriving(delta: number) {
     const key = (...values: string[]) => values.some((value) => this.pressed.has(value));
     const orbit = this.cameraView === 'orbit';
@@ -1408,11 +1437,13 @@ export class NeonCityGame {
     let boosting = this.nitroRemaining > 0 && this.boostCharge > 0;
     this.previousPosition.copy(this.carPosition);
     this.vehicleMotion.yaw = this.yaw;
-    const step = 1 / 120;
+    const step = VEHICLE_FIXED_STEP;
     this.physicsAccumulator += delta;
     const input = { throttle, brake, steer, steeringAssist: PLAYER_STEERING_ASSIST, handbrake: drifting, boost: boosting, boostTargetSpeed: this.nitroTargetSpeed };
     let trafficImpact = 0;
     while (this.physicsAccumulator + 1e-9 >= step) {
+      this.physicsPreviousPosition.copy(this.carPosition);
+      this.physicsPreviousYaw = this.yaw;
       input.boost = this.nitroRemaining > 0 && this.boostCharge > 0;
       input.boostTargetSpeed = input.boost ? this.nitroTargetSpeed : 0;
       this.updateWheelContacts();
@@ -1450,11 +1481,15 @@ export class NeonCityGame {
       const normalSpeed = this.velocity.x * nx + this.velocity.z * nz;
       if (normalSpeed < 0) { this.velocity.x -= normalSpeed * 1.04 * nx; this.velocity.z -= normalSpeed * 1.04 * nz; }
     }
-    if (Math.abs(this.carPosition.x) > CITY_EDGE || Math.abs(this.carPosition.z) > CITY_EDGE) {
+    const atBoundary = Math.abs(this.carPosition.x) > CITY_EDGE || Math.abs(this.carPosition.z) > CITY_EDGE;
+    if (atBoundary) {
       this.cancelNitro(); boosting = false;
       if (Math.abs(this.carPosition.x) > CITY_EDGE) { this.carPosition.x = THREE.MathUtils.clamp(this.carPosition.x, -CITY_EDGE, CITY_EDGE); this.velocity.x *= -.04; }
       if (Math.abs(this.carPosition.z) > CITY_EDGE) { this.carPosition.z = THREE.MathUtils.clamp(this.carPosition.z, -CITY_EDGE, CITY_EDGE); this.velocity.z *= -.04; }
     }
+    // A contact correction can lie before the last substep. Discard that
+    // snapshot so presentation never interpolates back through the obstacle.
+    if (collision || atBoundary || trafficImpact > 0) this.syncVehiclePresentation();
     this.updateWheelContacts();
     const supportHeight = this.wheelContacts.reduce((sum, c) => sum + c.height, 0) / 4 + .006;
     // Exact critically damped spring: long render frames cannot make a parked
@@ -1467,8 +1502,7 @@ export class NeonCityGame {
     if (Math.abs(this.carPosition.y - supportHeight) < .00001 && Math.abs(this.suspensionVelocity) < .00001) {
       this.carPosition.y = supportHeight; this.suspensionVelocity = 0;
     }
-    this.car.position.copy(this.carPosition);
-    this.car.rotation.y = this.yaw;
+    this.updateVehiclePresentation();
     for (let i = 0; i < this.wheelMeshes.length; i++) {
       const pivot = this.wheelMeshes[i].parent;
       if (pivot) pivot.position.y = .378 + this.wheelContacts[i].height - this.carPosition.y;
