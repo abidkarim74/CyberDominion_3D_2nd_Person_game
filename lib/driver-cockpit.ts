@@ -364,10 +364,19 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
     for (let i = 0; i < 2; i++) box(doorTrim, [.029, .006, .014], [side * .612, .699, -.030 + i * .025], dark);
     box(doorTrim, [.035, .045, .366], [side * .661, .560, .164], dark);
   }
-  box(cabin, [1.19, .031, 1.44], [0, .422, .033], dark);
+  // A dropped footwell lets the driver's shins fall naturally below the cushion.
+  box(cabin, [1.19, .031, .79], [0, .422, .355], dark);
+  const carpet = new THREE.MeshStandardMaterial({ name: 'Bugatti / charcoal footwell carpet', color: 0x101214, roughness: .98 });
+  box(cabin, [1.19, .031, .72], [0, .245, -.40], carpet);
+  box(cabin, [1.19, .178, .025], [0, .334, -.027], dark);
+  for (const side of [-1, 1]) {
+    soft(cabin, 'fitted carpet footwell mat', [.40, .008, .59], [side * .32, .265, -.41], carpet, .012);
+    box(cabin, [.005, .003, .54], [side * .32 - .19, .271, -.41], piping);
+    box(cabin, [.005, .003, .54], [side * .32 + .19, .271, -.41], piping);
+  }
   for (const x of [-.406, -.327, -.238]) {
-    const pedal = box(cabin, [.046, .067, .012], [x, .469, -.538], metal); pedal.rotation.x = -.32;
-    for (let i = -1; i <= 1; i++) box(cabin, [.031, .0028, .008], [x, .469 + i * .013, -.528], dark);
+    const pedal = box(cabin, [.046, .067, .012], [x, .312, -.603], metal); pedal.rotation.x = -.32;
+    for (let i = -1; i <= 1; i++) box(cabin, [.031, .0028, .008], [x, .312 + i * .013, -.593], dark);
   }
   soft(cabin, 'overhead leather console', [.156, .030, .118], [0, 1.224, -.377], leather, .008);
   for (const side of [-1, 1]) box(cabin, [.027, .004, .035], [side * .047, 1.204, -.377], lit);

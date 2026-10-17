@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 
 type MotionJoint = { bone: THREE.Bone; base: THREE.Quaternion; modified: boolean };
-type Leg = { upper: MotionJoint; lower: MotionJoint; foot: MotionJoint };
+type Leg = { side: 'left' | 'right'; upper: MotionJoint; lower: MotionJoint; foot: MotionJoint };
+export type FootContact = { position: THREE.Vector3; rotation: THREE.Quaternion; weight: number };
+export type FootContacts = Partial<Record<'left' | 'right', FootContact>>;
 
 /** Fits the authored legs above the road or cabin footwell without moving the hips. */
 export class PersonSeatMotion {
@@ -32,9 +34,9 @@ export class PersonSeatMotion {
       }
     });
     const motion = (bone: THREE.Bone): MotionJoint => ({ bone, base: new THREE.Quaternion(), modified: false });
-    for (const side of ['left', 'right']) {
+    for (const side of ['left', 'right'] as const) {
       const upper = bones.get(`${side}upleg`), lower = bones.get(`${side}leg`), foot = bones.get(`${side}foot`);
-      if (upper && lower && foot) this.legs.push({ upper: motion(upper), lower: motion(lower), foot: motion(foot) });
+      if (upper && lower && foot) this.legs.push({ side, upper: motion(upper), lower: motion(lower), foot: motion(foot) });
     }
   }
 
@@ -48,7 +50,7 @@ export class PersonSeatMotion {
   }
 
   /** Apply after animation and torso overlays; minAnkleY is a world-space height. */
-  update(minAnkleY: number | ((anklePosition: THREE.Vector3) => number), weight = 1) {
+  update(minAnkleY: number | ((anklePosition: THREE.Vector3, side: 'left' | 'right') => number), weight = 1, contacts?: FootContacts) {
     const blend = THREE.MathUtils.clamp(weight, 0, 1);
     if (typeof minAnkleY === 'number' && !Number.isFinite(minAnkleY) || blend < .000001) return;
     this.model.updateWorldMatrix(true, true);
@@ -58,10 +60,15 @@ export class PersonSeatMotion {
       upper.getWorldPosition(this.hip);
       lower.getWorldPosition(this.knee);
       foot.getWorldPosition(this.ankle);
-      const floor = typeof minAnkleY === 'number' ? minAnkleY : minAnkleY(this.ankle);
+      const contact = contacts?.[leg.side];
+      const contactWeight = THREE.MathUtils.clamp(contact?.weight ?? 0, 0, 1) * blend;
+      this.target.copy(this.ankle);
+      if (contact && contactWeight > 0) this.target.lerp(contact.position, contactWeight);
+      const floor = typeof minAnkleY === 'number' ? minAnkleY : minAnkleY(this.target, leg.side);
       if (!Number.isFinite(floor)) continue;
-      const lift = (floor - this.ankle.y) * blend;
-      if (lift <= .000001) continue;
+      const lift = Math.max(0, floor - this.target.y) * blend;
+      this.target.y += lift;
+      if (lift <= .000001 && contactWeight <= .000001) continue;
       const thighLength = this.hip.distanceTo(this.knee), shinLength = this.knee.distanceTo(this.ankle);
       if (thighLength < .00001 || shinLength < .00001) continue;
       for (const joint of [leg.upper, leg.lower, leg.foot]) {
@@ -69,7 +76,7 @@ export class PersonSeatMotion {
         joint.modified = true;
       }
       foot.getWorldQuaternion(this.footRotation);
-      this.target.copy(this.ankle); this.target.y += lift;
+      if (contact) this.footRotation.slerp(contact.rotation, contactWeight);
       this.axis.subVectors(this.target, this.hip);
       const requestedReach = this.axis.length();
       if (requestedReach < .000001) continue;

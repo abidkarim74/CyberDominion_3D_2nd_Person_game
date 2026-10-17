@@ -3,8 +3,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CAR_HALF_LENGTH, CAR_HALF_WIDTH, type ColliderGrid, type WorldCollider } from './city-collision';
 import { CITY_EDGE } from './city-layout';
 import { PersonIdleMotion } from './person-idle-motion';
-import { PersonSeatMotion } from './person-seat-motion';
-import { PersonSteeringMotion } from './person-steering-motion';
+import { PersonSeatMotion, type FootContacts } from './person-seat-motion';
+import { PersonSteeringMotion, type HandContacts } from './person-steering-motion';
 import { PersonDriverVisibility } from './person-driver-visibility';
 import { PERSON_WORLD_SCALE } from './person-scale';
 
@@ -28,12 +28,15 @@ type Transition = {
   doorway: THREE.Vector3;
   fromYaw: number;
   carYaw: number;
+  duration: number;
 };
 
 const PERSON_SCALE = PERSON_WORLD_SCALE;
 const RADIUS = .30, HEIGHT = 1.8 * PERSON_SCALE, WALK_SPEED = 1.65, RUN_SPEED = 4.3;
-const TRANSITION_SECONDS = 3.2, INTERACT_DISTANCE = 2.05, INTERACT_SPEED = 1;
-const ROAD_ANKLE_CLEARANCE = .145, CABIN_ANKLE_HEIGHT = .55;
+const TRANSITION_SECONDS = 4.4, INTERACT_DISTANCE = 2.05, INTERACT_SPEED = 1;
+const ROAD_ANKLE_CLEARANCE = .145, CABIN_ANKLE_HEIGHT = .38;
+const EXIT_PHASE_TIMES = [0, .10, .23, .43, .62, .70, .78, 1];
+const EXIT_PHASES = [1, .85, .70, .52, .32, .27, .18, 0];
 // The authored seated pelvis is .95m above the feet-centred model root.
 // Align it with the low cushion, leaving clearance below the inner headliner.
 const SEAT = new THREE.Vector3(-.32, .50 - .95 * PERSON_SCALE, .107);
@@ -96,6 +99,19 @@ export class PersonController {
   private readonly doorWorld = new THREE.Vector3();
   private readonly transferWorld = new THREE.Vector3();
   private readonly cabinInverse = new THREE.Matrix4();
+  private readonly cabinPoint = new THREE.Vector3();
+  private readonly cabinRotation = new THREE.Quaternion();
+  private readonly soleRotation = new THREE.Quaternion();
+  private readonly soleAxis = new THREE.Vector3();
+  private readonly soleScale = new THREE.Vector3();
+  private readonly footContacts: FootContacts = Object.fromEntries(['left', 'right'].map(side => [side,
+    { position: new THREE.Vector3(), rotation: new THREE.Quaternion(), weight: 0 }]));
+  private readonly footRest = new Map<string, { bone: THREE.Bone; rotation?: THREE.Quaternion; probes?: THREE.Vector3[] }>();
+  private readonly armBones = new Map<string, THREE.Bone>();
+  private readonly shoulderPoint = new THREE.Vector3();
+  private readonly doorStance = new THREE.Vector3();
+  private readonly handContacts: HandContacts = Object.fromEntries(['left', 'right'].map(side => [side,
+    { position: new THREE.Vector3(), normal: new THREE.Vector3(), up: new THREE.Vector3(), weight: 0 }]));
   private readonly seatedFacing = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
   private readonly lastCarPosition = new THREE.Vector3();
   private readonly from = new THREE.Vector3();
@@ -116,25 +132,32 @@ export class PersonController {
     collisionRadius: number; transitionSeconds: number; loadingError?: string;
   } = { asset: '/models/person/person-winter.glb?v=winter-outfit-v2', animations: [], height: 0, scale: PERSON_SCALE, meshes: 0,
     triangles: 0, collisionRadius: RADIUS, transitionSeconds: TRANSITION_SECONDS };
-  private readonly ankleFloor = (ankle: THREE.Vector3) => {
+  private readonly ankleFloor = (ankle: THREE.Vector3, side: 'left' | 'right') => {
+    const rest = this.footRest.get(side), contact = this.footContacts[side];
+    rest?.bone.getWorldQuaternion(this.soleRotation);
+    if (contact) this.soleRotation.slerp(contact.rotation, contact.weight);
+    const street = this.getGroundHeight(ankle.x, ankle.z) + this.soleClearance(side, this.soleRotation);
+    if (this.mode === 'walking') return street;
+    this.cabinPoint.copy(ankle).applyMatrix4(this.cabinInverse);
+    const cabinHeight = THREE.MathUtils.lerp(CABIN_ANKLE_HEIGHT, .55, smooth((this.cabinPoint.z + .14) / .16));
     if (this.mode === 'driving' && this.cabin) {
       // Solve the tilted cabin floor plane at this ankle's world X/Z.
       const e = this.cabinInverse.elements;
-      return (CABIN_ANKLE_HEIGHT - e[1] * ankle.x - e[9] * ankle.z - e[13]) / e[5];
+      return (cabinHeight - e[1] * ankle.x - e[9] * ankle.z - e[13]) / e[5];
     }
     const dx = ankle.x - this.lastCarPosition.x, dz = ankle.z - this.lastCarPosition.z;
-    const side = dx * Math.cos(this.lastCarYaw) - dz * Math.sin(this.lastCarYaw);
+    const lateralPosition = dx * Math.cos(this.lastCarYaw) - dz * Math.sin(this.lastCarYaw);
     // Lift the leading foot before it crosses the sill, then place both soles
     // on the cabin floor. The trailing foot can stay planted on the road.
-    const inside = smooth((side + 1.30) / .24);
-    const street = this.getGroundHeight(ankle.x, ankle.z) + ROAD_ANKLE_CLEARANCE;
-    return THREE.MathUtils.lerp(street, this.lastCarPosition.y + CABIN_ANKLE_HEIGHT, inside);
+    const inside = smooth((lateralPosition + 1.30) / .24);
+    return THREE.MathUtils.lerp(street, this.lastCarPosition.y + cabinHeight, inside);
   };
 
   constructor(private readonly scene: THREE.Scene, private readonly collisionWorld: ColliderGrid,
     private readonly getGroundHeight: (x: number, z: number) => number,
     private readonly cabin?: THREE.Object3D,
-    private readonly steeringWheel?: THREE.Object3D) {
+    private readonly steeringWheel?: THREE.Object3D,
+    private readonly driverDoor?: THREE.Object3D) {
     this.root.name = 'Player / futuristic winter suit';
     this.root.rotation.order = 'YXZ';
     this.root.userData.dynamic = true;
@@ -147,6 +170,12 @@ export class PersonController {
       this.model.scale.multiplyScalar(PERSON_SCALE);
       this.model.traverse(object => {
         object.userData.dynamic = true;
+        if (object instanceof THREE.Bone) {
+          const side = object.name.toLowerCase().match(/(left|right)foot$/)?.[1];
+          if (side) this.footRest.set(side, { bone: object });
+          const arm = object.name.toLowerCase().match(/(left|right)arm$/)?.[1];
+          if (arm) this.armBones.set(arm, object);
+        }
         if (!(object instanceof THREE.Mesh)) return;
         object.castShadow = true;
         object.receiveShadow = true;
@@ -179,6 +208,7 @@ export class PersonController {
       this.mixer.update(0);
       this.idleMotion = new PersonIdleMotion(this.model);
       this.seatMotion = new PersonSeatMotion(this.model);
+      this.calibrateSoles();
       if (this.steeringWheel) this.steeringMotion = new PersonSteeringMotion(this.model, this.steeringWheel);
       this.driverVisibility = new PersonDriverVisibility(this.model);
       this.driverVisibility.setDriverView(this.driverView);
@@ -200,6 +230,8 @@ export class PersonController {
     return { ...this.diagnosticState, mode: this.mode, ready: this.ready, speed: this.speed,
       steering: this.steeringMotion?.diagnostics,
       driverVisibility: this.driverVisibility?.diagnostics,
+      transitionProgress: this.transition ? this.transition.elapsed / this.transition.duration : 0,
+      transitionSeconds: this.transition?.duration ?? TRANSITION_SECONDS,
       doorOpenAmount: this.doorOpenAmount, position: { x: this.position.x, y: this.position.y, z: this.position.z } };
   }
 
@@ -239,12 +271,13 @@ export class PersonController {
     this.mixer?.update(dt);
     this.idleMotion?.update(dt, this.mode === 'walking' && this.speed < .10,
       this.mode === 'driving', this.transferDuck);
-    if (this.mode !== 'walking') this.seatMotion?.update(this.ankleFloor);
-    const progress = this.transition ? this.transition.elapsed / TRANSITION_SECONDS : 0;
+    this.updateContacts();
+    this.seatMotion?.update(this.ankleFloor, 1, this.footContacts);
+    const progress = this.transition ? this.transition.elapsed / this.transition.duration : 0;
     const grip = this.mode === 'driving' ? 1
-      : this.mode === 'exiting' ? 1 - smooth(progress / .12)
-      : this.mode === 'entering' ? smooth((progress - .86) / .14) : 0;
-    this.steeringMotion?.update(grip);
+      : this.mode === 'exiting' ? 1 - smooth(progress / .10)
+      : this.mode === 'entering' ? smooth((progress - .92) / .08) : 0;
+    this.steeringMotion?.update(grip, this.handContacts);
     this.refreshInteraction();
   }
 
@@ -259,7 +292,8 @@ export class PersonController {
     this.speed = 0;
     const doorway = this.localToWorld(-1.40, 0, .30, new THREE.Vector3());
     doorway.y = this.getGroundHeight(doorway.x, doorway.z);
-    this.transition = { elapsed: 0, outside, doorway, fromYaw: this.yaw, carYaw };
+    const duration = TRANSITION_SECONDS + Math.max(0, outside.distanceTo(doorway) - 1.1) / WALK_SPEED;
+    this.transition = { elapsed: 0, outside, doorway, fromYaw: this.yaw, carYaw, duration };
     this.mode = this.mode === 'driving' ? 'exiting' : 'entering';
     this.root.rotation.x = this.root.rotation.z = 0;
     this.play(this.mode === 'exiting' ? 'ExitCar' : 'EnterCar', .12, true);
@@ -356,13 +390,25 @@ export class PersonController {
 
   private updateTransition(dt: number) {
     const transfer = this.transition!;
-    transfer.elapsed = Math.min(TRANSITION_SECONDS, transfer.elapsed + dt);
-    const t = transfer.elapsed / TRANSITION_SECONDS;
+    transfer.elapsed = Math.min(transfer.duration, transfer.elapsed + dt);
+    const t = transfer.elapsed / transfer.duration;
     const exiting = this.mode === 'exiting';
-    // One reversible path keeps entry and exit aligned with the actual opening.
-    const u = exiting ? 1 - t : t;
-    this.localToWorld(SEAT.x, SEAT.y, SEAT.z, this.seatWorld);
+    const u = this.transferPhase(t, exiting);
+    if (this.cabin) {
+      this.cabin.updateWorldMatrix(true, false);
+      this.cabinInverse.copy(this.cabin.matrixWorld).invert();
+      this.seatWorld.copy(SEAT).applyMatrix4(this.cabin.matrixWorld);
+    } else this.localToWorld(SEAT.x, SEAT.y, SEAT.z, this.seatWorld);
     this.doorOpenAmount = smooth((u - .18) / .14) * (1 - smooth((u - .85) / .15));
+    this.doorStance.copy(transfer.doorway);
+    if (this.driverDoor) {
+      this.driverDoor.rotation.y = -.96 * this.doorOpenAmount;
+      this.driverDoor.updateWorldMatrix(true, false);
+      this.doorStance.set(-.04, 0, 1.23).applyMatrix4(this.driverDoor.matrixWorld);
+      this.doorStance.x -= .44 * Math.cos(transfer.carYaw);
+      this.doorStance.z += .44 * Math.sin(transfer.carYaw);
+      this.doorStance.y = this.getGroundHeight(this.doorStance.x, this.doorStance.z);
+    }
     const crouch = smooth((u - .32) / .14);
     const slide = smooth((u - .46) / .24);
     const settle = smooth((u - .70) / .12);
@@ -376,9 +422,16 @@ export class PersonController {
       this.position.y = this.getGroundHeight(this.position.x, this.position.z);
       this.yaw = outsideYaw + angleDifference(doorwayYaw, outsideYaw) * approach;
       // Take actual steps to/from the door rather than sliding a held pose.
-      if (transfer.outside.distanceToSquared(transfer.doorway) > .02) this.play('Walk', .12);
+      if (transfer.outside.distanceToSquared(transfer.doorway) > .02) {
+        this.play('Walk', .12);
+        const stepSpeed = transfer.outside.distanceTo(transfer.doorway) / (transfer.duration * (exiting ? .22 : .18));
+        this.activeAction?.setEffectiveTimeScale(THREE.MathUtils.clamp(stepSpeed / (WALK_SPEED * PERSON_SCALE), .4, 1.45));
+      }
     } else {
-      this.transferWorld.copy(transfer.doorway);
+      // Follow the opening door outward, then step back to the sill while ducking.
+      // This keeps the release handle within arm's reach instead of through the torso.
+      this.transferWorld.lerpVectors(transfer.doorway, this.doorStance, this.doorOpenAmount);
+      this.transferWorld.lerp(transfer.doorway, crouch);
       // Duck outside the sill before the torso moves through the open doorway.
       this.transferWorld.y = THREE.MathUtils.lerp(transfer.doorway.y,
         this.lastCarPosition.y - .14, crouch);
@@ -387,11 +440,16 @@ export class PersonController {
       pose = u < .32 ? .25 * smooth((u - .18) / .14)
         : u < .46 ? .25 + .25 * crouch
           : u < .70 ? .50 + .34 * slide : .84 + .16 * settle;
-      const clip = exiting ? 'ExitCar' : 'EnterCar';
-      if (this.activeAction !== this.actions.get(clip)) this.play(clip, .12, true);
-      if (this.activeAction) {
-        this.activeAction.setEffectiveTimeScale(0);
-        this.activeAction.time = this.activeAction.getClip().duration * (exiting ? 1 - pose : pose);
+      if (u < .32) {
+        this.play('Walk', .12);
+        this.activeAction?.setEffectiveTimeScale(exiting ? .9 : -.9);
+      } else {
+        const clip = exiting ? 'ExitCar' : 'EnterCar';
+        if (this.activeAction !== this.actions.get(clip)) this.play(clip, .12, true);
+        if (this.activeAction) {
+          this.activeAction.setEffectiveTimeScale(0);
+          this.activeAction.time = this.activeAction.getClip().duration * (exiting ? 1 - pose : pose);
+        }
       }
     }
     if (t < 1) return;
@@ -403,6 +461,128 @@ export class PersonController {
     if (exiting) this.position.y = this.getGroundHeight(this.position.x, this.position.z);
     this.yaw = transfer.carYaw + Math.PI;
     this.play(exiting ? 'Idle' : 'Seated', exiting ? .32 : .16);
+  }
+
+  /** Exit has time to release the wheel, push the door, stand, and step clear. */
+  private transferPhase(t: number, exiting: boolean) {
+    if (!exiting) return t;
+    for (let i = 1; i < EXIT_PHASE_TIMES.length; i++) {
+      if (t <= EXIT_PHASE_TIMES[i]) return THREE.MathUtils.lerp(EXIT_PHASES[i - 1], EXIT_PHASES[i],
+        (t - EXIT_PHASE_TIMES[i - 1]) / (EXIT_PHASE_TIMES[i] - EXIT_PHASE_TIMES[i - 1]));
+    }
+    return 0;
+  }
+
+  /** Plant each foot independently and keep the reaching palm on the moving door. */
+  private updateContacts() {
+    for (const contact of Object.values(this.handContacts)) contact.weight = 0;
+    for (const contact of Object.values(this.footContacts)) contact.weight = 0;
+    if (this.mode === 'walking' || !this.cabin) return;
+    this.cabin.updateWorldMatrix(true, false);
+    this.cabinInverse.copy(this.cabin.matrixWorld).invert();
+    this.cabin.getWorldQuaternion(this.cabinRotation);
+    const transfer = this.transition;
+    const u = transfer ? this.transferPhase(transfer.elapsed / transfer.duration, this.mode === 'exiting') : 1;
+    for (const side of ['left', 'right'] as const) {
+      const contact = this.footContacts[side]!;
+      const rest = this.footRest.get(side);
+      if (rest && !rest.rotation && this.mode === 'driving') {
+        rest.rotation = rest.bone.getWorldQuaternion(new THREE.Quaternion())
+          .premultiply(this.cabinRotation.clone().invert());
+      }
+      if (!rest?.rotation) continue;
+      contact.rotation.copy(this.cabinRotation).multiply(rest.rotation);
+      // Right foot leads into the footwell; the left remains outside for balance.
+      const step = this.mode === 'driving' ? 1 : smooth((u - (side === 'right' ? .45 : .51)) / (side === 'right' ? .23 : .21));
+      contact.position.set(side === 'left' ? -.435 : -.225, CABIN_ANKLE_HEIGHT, -.43).applyMatrix4(this.cabin.matrixWorld);
+      if (transfer && step < 1) {
+        this.localToWorld(-1.40, 0, .30 + (side === 'left' ? -.12 : .12), this.transferWorld);
+        this.transferWorld.y = this.getGroundHeight(this.transferWorld.x, this.transferWorld.z) + this.soleClearance(side, contact.rotation);
+        contact.position.lerpVectors(this.transferWorld, contact.position, step);
+        contact.position.y += Math.sin(step * Math.PI) * .14;
+      }
+      contact.weight = this.mode === 'driving' ? 1 : smooth((u - .34) / .12);
+    }
+    if (!transfer || !this.driverDoor) return;
+    // Update the hinge before sampling it: hands and door use the same frame.
+    this.driverDoor.rotation.y = -.96 * this.doorOpenAmount;
+    this.driverDoor.updateWorldMatrix(true, false);
+    const left = this.handContacts.left!;
+    const inside = u > .70;
+    // Anchor offsets are in the authored hinge's local frame.
+    left.position.set(inside ? .22 : -.04, .30, inside ? .80 : 1.23).applyMatrix4(this.driverDoor.matrixWorld);
+    left.normal.set(inside ? 1 : -1, 0, 0).transformDirection(this.driverDoor.matrixWorld);
+    left.up.set(0, 0, -1).transformDirection(this.driverDoor.matrixWorld);
+    left.weight = inside ? smooth((u - .74) / .08) * (1 - smooth((u - .92) / .06))
+      : smooth((u - .16) / .06) * (1 - smooth((u - .37) / .10));
+    const right = this.handContacts.right!;
+    right.position.set(-.12, .79, -.17).applyMatrix4(this.cabin.matrixWorld);
+    right.normal.set(0, 1, 0).applyQuaternion(this.cabinRotation);
+    right.up.set(0, 0, -1).applyQuaternion(this.cabinRotation);
+    right.weight = smooth((u - .42) / .10) * (1 - smooth((u - .72) / .12)) * .85;
+    this.model?.updateWorldMatrix(true, true);
+    for (const side of ['left', 'right'] as const) {
+      const contact = this.handContacts[side]!;
+      const shoulder = this.armBones.get(side);
+      if (shoulder && contact.weight > 0) {
+        shoulder.getWorldPosition(this.shoulderPoint);
+        // Release a contact as it leaves anatomical reach; never stretch an arm.
+        contact.weight *= smooth((.62 - this.shoulderPoint.distanceTo(contact.position)) / .16);
+      }
+    }
+  }
+
+  /** Cache the boot silhouette once; runtime grounding checks only a few points. */
+  private calibrateSoles() {
+    if (!this.model) return;
+    this.model.updateWorldMatrix(true, true);
+    const vertices = new Map<string, THREE.Vector3[]>([['left', []], ['right', []]]);
+    const inverses = new Map([...this.footRest].map(([side, rest]) => [side, rest.bone.matrixWorld.clone().invert()]));
+    this.model.traverse(mesh => {
+      if (!(mesh instanceof THREE.SkinnedMesh)) return;
+      const joints = mesh.geometry.getAttribute('skinIndex'), weights = mesh.geometry.getAttribute('skinWeight');
+      if (!joints || !weights) return;
+      const sides = mesh.skeleton.bones.map(bone => bone.name.toLowerCase().match(/(left|right)(?:foot|toe)/)?.[1]);
+      mesh.skeleton.update();
+      for (let vertex = 0; vertex < joints.count; vertex++) {
+        for (const side of ['left', 'right']) {
+          let weight = 0;
+          for (let component = 0; component < 4; component++) {
+            if (sides[joints.getComponent(vertex, component)] === side) weight += weights.getComponent(vertex, component);
+          }
+          const inverse = inverses.get(side);
+          if (weight < .5 || !inverse) continue;
+          mesh.getVertexPosition(vertex, this.soleAxis).applyMatrix4(mesh.matrixWorld).applyMatrix4(inverse);
+          vertices.get(side)!.push(this.soleAxis.clone());
+        }
+      }
+    });
+    for (const [side, points] of vertices) {
+      const probes = new Set<THREE.Vector3>();
+      for (const x of [-1, 0, 1]) for (const y of [-1, 0, 1]) for (const z of [-1, 0, 1]) {
+        if (!x && !y && !z || !points.length) continue;
+        this.soleAxis.set(x, y, z);
+        let extreme = points[0], distance = -Infinity;
+        for (const point of points) {
+          const value = point.dot(this.soleAxis);
+          if (value > distance) { distance = value; extreme = point; }
+        }
+        probes.add(extreme);
+      }
+      const rest = this.footRest.get(side);
+      if (rest) rest.probes = [...probes];
+    }
+  }
+
+  private soleClearance(side: string, rotation: THREE.Quaternion) {
+    const rest = this.footRest.get(side);
+    if (!rest?.probes?.length) return ROAD_ANKLE_CLEARANCE;
+    rest.bone.getWorldScale(this.soleScale);
+    let lowest = Infinity;
+    for (const point of rest.probes) {
+      lowest = Math.min(lowest, this.soleAxis.copy(point).multiply(this.soleScale).applyQuaternion(rotation).y);
+    }
+    return Math.max(.04, -lowest + .010);
   }
 
   private updateWalking(dt: number, pressed: ReadonlySet<string>) {
@@ -524,6 +704,7 @@ export class PersonController {
   }
 
   private findExit() {
+    if (!this.clearDoorSwing()) return undefined;
     for (const [x, z] of EXIT_CANDIDATES) {
       const candidate = this.localToWorld(x, 0, z, new THREE.Vector3());
       candidate.y = this.getGroundHeight(candidate.x, candidate.z);
@@ -534,6 +715,22 @@ export class PersonController {
       if (this.clearStandingPosition(sill) && !this.firstContact(sill, candidate, false)) return candidate;
     }
     return undefined;
+  }
+
+  private clearDoorSwing() {
+    if (!this.driverDoor) return true;
+    const hinge = this.driverDoor.position;
+    const previous = this.localToWorld(-1.40, 0, .30, new THREE.Vector3());
+    previous.y = this.getGroundHeight(previous.x, previous.z);
+    const point = new THREE.Vector3();
+    for (const angle of [.24, .48, .72, .96]) {
+      this.localToWorld(hinge.x - .04 * Math.cos(angle) - 1.23 * Math.sin(angle) - .44, 0,
+        hinge.z - .04 * Math.sin(angle) + 1.23 * Math.cos(angle), point);
+      point.y = this.getGroundHeight(point.x, point.z);
+      if (!this.clearStandingPosition(point) || this.firstContact(previous, point, false)) return false;
+      previous.copy(point);
+    }
+    return true;
   }
 
   private refreshInteraction() {
@@ -563,7 +760,7 @@ export class PersonController {
     if (this.interactionAvailable) {
       const sill = this.localToWorld(-1.40, 0, .30, this.to);
       sill.y = this.getGroundHeight(sill.x, sill.z);
-      this.interactionAvailable = this.clearStandingPosition(sill) && !this.firstContact(this.position, sill, false);
+      this.interactionAvailable = this.clearStandingPosition(sill) && this.clearDoorSwing() && !this.firstContact(this.position, sill, false);
     }
     this.interactionLabel = this.interactionAvailable ? 'Get in car' : 'Walk to the driver’s door';
   }

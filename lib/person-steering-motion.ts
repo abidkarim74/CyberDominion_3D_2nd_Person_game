@@ -2,6 +2,8 @@ import * as THREE from 'three';
 
 type MotionJoint = { bone: THREE.Bone; base: THREE.Quaternion; modified: boolean };
 type FingerJoint = MotionJoint & { axis: THREE.Vector3; angle: number };
+export type HandContact = { position: THREE.Vector3; normal: THREE.Vector3; up: THREE.Vector3; weight: number };
+export type HandContacts = Partial<Record<'left' | 'right', HandContact>>;
 type Arm = {
   side: 'left' | 'right'; sign: number;
   shoulder?: MotionJoint; upper: MotionJoint; lower: MotionJoint; hand: MotionJoint;
@@ -103,15 +105,19 @@ export class PersonSteeringMotion {
   }
 
   /** Apply after the mixer and torso overlays, after the wheel's current rotation. */
-  update(weight = 1) {
-    const blend = Number.isFinite(weight) ? THREE.MathUtils.clamp(weight, 0, 1) : 0;
-    if (blend < .000001 || !this.arms.length) return;
-    this.appliedWeight = blend;
+  update(weight = 1, contacts?: HandContacts) {
+    const wheelWeight = Number.isFinite(weight) ? THREE.MathUtils.clamp(weight, 0, 1) : 0;
+    if (wheelWeight < .000001 && !contacts || !this.arms.length) return;
+    this.appliedWeight = wheelWeight;
     this.model.updateWorldMatrix(true, true);
     this.steeringWheel.updateWorldMatrix(true, false);
     this.steeringWheel.getWorldQuaternion(this.wheelRotation);
     (this.steeringWheel.parent ?? this.steeringWheel).getWorldQuaternion(this.columnRotation);
     for (const arm of this.arms) {
+      const contact = contacts?.[arm.side];
+      const contactWeight = THREE.MathUtils.clamp(contact?.weight ?? 0, 0, 1);
+      const blend = THREE.MathUtils.clamp(wheelWeight + contactWeight, 0, 1);
+      if (blend < .000001) continue;
       const upper = arm.upper.bone, lower = arm.lower.bone, hand = arm.hand.bone;
       for (const joint of arm.joints) { joint.base.copy(joint.bone.quaternion); joint.modified = true; }
       // Grip slightly above nine and three o'clock. Local targets inherit the
@@ -119,6 +125,12 @@ export class PersonSteeringMotion {
       arm.target.set(arm.sign * .155, .025, .019).applyMatrix4(this.steeringWheel.matrixWorld);
       this.long.set(-arm.sign * .12, .85, -.50).normalize().applyQuaternion(this.wheelRotation);
       this.normal.set(-arm.sign * .38, -.10, -1).normalize().applyQuaternion(this.wheelRotation);
+      if (contact && contactWeight > 0) {
+        const influence = contactWeight / (contactWeight + wheelWeight);
+        arm.target.lerp(contact.position, influence);
+        this.long.lerp(contact.up, influence).normalize();
+        this.normal.lerp(contact.normal, influence).normalize();
+      }
       this.normal.addScaledVector(this.long, -this.normal.dot(this.long)).normalize();
       this.across.crossVectors(this.long, this.normal).normalize();
       this.normal.crossVectors(this.across, this.long).normalize();
@@ -176,7 +188,8 @@ export class PersonSteeringMotion {
       hand.parent!.getWorldQuaternion(this.parentRotation);
       hand.quaternion.copy(this.parentRotation.invert()).multiply(this.handRotation).normalize();
       for (const finger of arm.fingers) {
-        this.rotation.setFromAxisAngle(finger.axis, finger.angle);
+        const curl = 1 - .60 * contactWeight / Math.max(.000001, contactWeight + wheelWeight);
+        this.rotation.setFromAxisAngle(finger.axis, finger.angle * curl);
         finger.bone.quaternion.copy(finger.base).multiply(this.rotation).normalize();
       }
       // Blend complete local rotations to/from the authored enter/exit pose.

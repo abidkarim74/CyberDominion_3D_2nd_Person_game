@@ -91,7 +91,8 @@ try {
           point.applyMatrix4(inverse);
           if (point.x < -1.10) { roadVertices++; roadClearance = Math.min(roadClearance, worldY - road); }
           if (Math.abs(point.x) < .63 && point.z > -.74 && point.z < .65) {
-            cabinVertices++; floorClearance = Math.min(floorClearance, point.y - .4375);
+            const floor = point.z < -.04 ? .271 : .4375;
+            cabinVertices++; floorClearance = Math.min(floorClearance, point.y - floor);
           }
         }
       }
@@ -104,17 +105,25 @@ try {
           floorClearance: Number.isFinite(floorClearance) ? floorClearance : null },
         door: p.doorOpenAmount, doorAngle: g.carRig.driverDoor.rotation.y,
         clip: p.activeAction?.getClip().name, poseTime: p.activeAction?.time,
-        elapsed: p.transition?.elapsed ?? null };
+        elapsed: p.transition?.elapsed ?? null, steering: p.diagnostics.steering,
+        handContacts: Object.fromEntries(Object.entries(p.handContacts).map(([side, contact]) =>
+          [side, { position: contact.position.clone().applyMatrix4(inverse).toArray(), weight: contact.weight }])),
+        footTargets: Object.fromEntries(Object.entries(p.footContacts).map(([side, contact]) =>
+          [side, { position: contact.position.clone().applyMatrix4(inverse).toArray(), weight: contact.weight }])) };
     };
     window.__entryCheck = { sample, roofTriangles: roof.length, headVertices: heads.reduce((sum, entry) => sum + entry.vertices.length, 0),
       advance(seconds) {
         const samples = [];
         if (!g.previousTime) g.previousTime = performance.now();
-        for (let remaining = seconds; remaining > .000001; remaining -= .05) {
-          g.frame(g.previousTime + Math.min(.05, remaining) * 1000);
-          cancelAnimationFrame(g.animationFrame);
-          samples.push(sample());
-        }
+        const render = g.composer.render;
+        g.composer.render = () => {};
+        try {
+          for (let remaining = seconds; remaining > .000001; remaining -= .05) {
+            g.frame(g.previousTime + Math.min(.05, remaining) * 1000);
+            cancelAnimationFrame(g.animationFrame);
+            samples.push(sample());
+          }
+        } finally { g.composer.render = render; }
         return samples;
       },
       renderCamera(position, target) {
@@ -136,13 +145,27 @@ try {
   console.log(`Seated head clearance: ${Math.min(...report.checks.seated.map(sample => sample.clearance)).toFixed(4)}m; sole clearance: ${Math.min(...report.checks.seated.map(sample => sample.soles.floorClearance)).toFixed(4)}m`);
   assert.ok(report.checks.seated.every(sample => sample.covered > 1000 && sample.clearance > .01),
     'The animated seated head clears the inside roof by at least one centimetre');
+  for (const sample of report.checks.seated) {
+    const bone = suffix => Object.entries(sample.bones).find(([name]) => name.endsWith(suffix))[1];
+    for (const side of ['Left', 'Right']) {
+      const foot = bone(`${side}Foot`), hip = bone('Hips');
+      assert.ok(foot[1] < hip[1] - .10 && foot[2] < -.35,
+        'Both seated boots rest down in the footwell toward the pedals');
+    }
+  }
   await page.evaluate(() => window.__entryCheck.renderCamera([-3.2, 2.1, 2.2], [-.2, 1.05, .1]));
   await page.screenshot({ path: 'artifacts/person-seated-roof-clearance.png' });
 
   await page.keyboard.press('e');
   assert.equal(await page.evaluate(() => document.querySelector('canvas').__drive.person.mode), 'exiting');
   const duration = info.transitionSeconds;
-  report.checks.exit = await advance(duration + .15);
+  await page.keyboard.press('e');
+  assert.equal(await page.evaluate(() => document.querySelector('canvas').__drive.person.mode), 'exiting',
+    'Repeated interaction does not interrupt an active transfer');
+  report.checks.exit = await advance(duration * .44);
+  await page.evaluate(() => window.__entryCheck.renderCamera([-3.6, 1.6, 1.8], [-.8, .85, .1]));
+  await page.screenshot({ path: 'artifacts/person-exiting-doorway.png' });
+  report.checks.exit.push(...await advance(duration * .56 + .15));
   assert.equal(report.checks.exit.at(-1).mode, 'walking');
   assert.ok(report.checks.exit.some(sample => sample.door > .98));
   const outside = report.checks.exit.at(-1);
@@ -205,15 +228,29 @@ try {
     .every(sample => sample.root[0] < -1.1), 'The door opens before the person crosses the sill');
   assert.ok(entry.some(sample => sample.root[1] < outside.root[1] - .12 && sample.root[0] < -.7),
     'The person ducks outside the low roof before entering');
+  assert.ok(entry.some(sample => sample.footTargets.right.position[0] - sample.footTargets.left.position[0] > .30),
+    'The right foot leads across the sill before the trailing foot follows');
   assert.ok(entry.every((sample, index) => index === 0 || Math.hypot(...sample.root.map((value, axis) => value - entry[index - 1].root[axis])) < .30),
     'Entry follows a continuous path without teleporting');
   report.checks.afterEntry = await advance(2);
   assert.ok(report.checks.afterEntry.every(sample => sample.clearance > .01 && sample.covered > 1000),
     'Head remains inside the cabin throughout seated breathing after entry');
   const transfers = [...report.checks.exit, ...entry].filter(sample => sample.mode === 'entering' || sample.mode === 'exiting');
+  const handContacts = transfers.flatMap(sample => Object.entries(sample.handContacts)
+    .filter(([, contact]) => contact.weight > .98)
+    .map(([side]) => sample.steering.grips.find(grip => grip.side === side)));
+  assert.ok(handContacts.length > 0 && handContacts.every(grip => grip.error < .035),
+    'Fully engaged hand contacts stay within 3.5cm of the moving door or cabin support');
+  assert.ok(transfers.filter(sample => sample.covered > 0).every(sample => sample.clearance >= .005),
+    'Both entry and exit clear the actual cabin headliner');
   console.log(`Transfer sole clearance: road ${Math.min(...transfers.filter(sample => sample.soles.roadClearance !== null).map(sample => sample.soles.roadClearance)).toFixed(4)}m; cabin ${Math.min(...transfers.filter(sample => sample.soles.floorClearance !== null).map(sample => sample.soles.floorClearance)).toFixed(4)}m`);
   assert.ok(transfers.filter(sample => sample.soles.roadVertices > 0).every(sample => sample.soles.roadClearance >= -.01),
     'Actual shoe soles remain within one centimetre of the snowy road while the feet are outside the car');
+  const planted = transfers.filter(sample => sample.root[0] < -1.36 && sample.footTargets.left.weight > .98);
+  assert.ok(planted.length > 0 && planted.every(sample => sample.soles.roadClearance < .035),
+    'The planted boot meets the road within 3.5cm instead of hovering during the doorway crouch');
+  assert.ok(report.checks.exit.filter(sample => sample.mode === 'walking')
+    .every(sample => sample.soles.roadClearance >= -.01), 'Grounding continues through the final step and idle blend');
   assert.ok(transfers.filter(sample => sample.soles.cabinVertices > 0).every(sample => sample.soles.floorClearance >= -.004),
     'Actual shoe soles clear the cabin floor while crossing into the footwell');
   assert.ok(report.checks.afterEntry.every(sample => sample.soles.cabinVertices > 100 && sample.soles.floorClearance >= -.004),

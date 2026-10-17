@@ -555,7 +555,7 @@ export class NeonCityGame {
     this.snowfall = addFallingSnow(this.scene, this.coveredRoads);
     this.traffic = new AiTraffic(this.scene, this.carRig, this.collisionWorld, this.roadSnow.sample);
     this.person = new PersonController(this.scene, this.cameraCollisionWorld, (x, z) => this.roadSnow.sample(x, z).height,
-      this.carRig.body, this.carRig.cockpit.steeringWheel);
+      this.carRig.body, this.carRig.cockpit.steeringWheel, this.carRig.driverDoor);
     this.person.resetDriving(this.carPosition, this.yaw);
     this.pedestrians = new AiPedestrians(this.scene, cameraSolids, (x, z) => this.roadSnow.sample(x, z).height);
     this.pedestrians.update(0, this.carPosition, this.graphicsQuality);
@@ -1072,7 +1072,7 @@ export class NeonCityGame {
       this.physicsAccumulator = 0; this.steerInput = 0; this.reverseEngaged = false;
       if (this.person.mode === 'exiting') {
         if (this.cameraView === 'chase' || this.cameraView === 'driver') this.drivingCamera = this.cameraView;
-        this.personCameraYaw = this.yaw;
+        this.personCameraYaw = this.yaw - 1.10;
         this.personCameraElevation = .22;
         this.setCameraView('person');
       }
