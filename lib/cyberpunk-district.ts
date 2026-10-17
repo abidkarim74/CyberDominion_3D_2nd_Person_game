@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ROAD_STEP, RETAIL_PODIUM_HALF_SIZE } from './city-layout';
+import { ROAD_STEP, RETAIL_PODIUM_HALF_SIZE, isCitySquare } from './city-layout';
 import { animatedScreenMaterial, screenClock } from './city-screens';
 
 type AtlasTile = { x: number; y: number; width: number; height: number };
@@ -278,6 +278,7 @@ export function addCyberpunkDistrict(scene: THREE.Scene) {
 
   for (let ix = 0; ix < 17; ix++) for (let iz = 0; iz < 17; iz++) {
     const x = (ix - 8) * ROAD_STEP; const z = (iz - 8) * ROAD_STEP;
+    if (isCitySquare(x, z)) continue;
     const seed = ix * 17 + iz;
     const block = new THREE.Group(); block.name = 'Cyberpunk mixed-use block'; block.position.set(x, 0, z); scene.add(block); blocks.push(block);
     for (let side = 0; side < 4; side++) {

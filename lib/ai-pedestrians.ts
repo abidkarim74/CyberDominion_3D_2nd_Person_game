@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isCitySquare } from './city-layout';
 import type { WorldCollider } from './city-collision';
 import type { GraphicsQuality } from './graphics-quality';
 import type { VehicleBlocker } from './person-controller';
@@ -62,7 +63,7 @@ export class AiPedestrians {
           this.people.push({ id, appearance: createPedestrianAppearance(id + 1), route, progress,
             speed: cruise, walkingSpeed: cruise, x: this.next.x, z: this.next.z, yaw: this.next.yaw,
             phase: random() * Math.PI * 2, wait: 0,
-            groundY: Math.max(.24, groundHeight(this.next.x, this.next.z)), distanceSquared: Infinity });
+            groundY: Math.max(isCitySquare(this.next.x, this.next.z) ? .016 : .24, groundHeight(this.next.x, this.next.z)), distanceSquared: Infinity });
         }
         if (route.closed) for (let i = 0; i < count; i++) this.people[firstId + i].leaderId = firstId + (i + 1) % count;
       }
@@ -136,7 +137,7 @@ export class AiPedestrians {
     this.renderer.beginFrame();
     for (let i = 0; i < this.visibleCount; i++) {
       const pedestrian = this.nearby[i];
-      pedestrian.groundY = Math.max(.24, this.groundHeight(pedestrian.x, pedestrian.z));
+      pedestrian.groundY = Math.max(isCitySquare(pedestrian.x, pedestrian.z) ? .016 : .24, this.groundHeight(pedestrian.x, pedestrian.z));
       this.renderer.set(i, pedestrian.appearance, pedestrian.x, pedestrian.groundY, pedestrian.z,
         pedestrian.yaw, pedestrian.phase, pedestrian.walkingSpeed, this.time);
     }

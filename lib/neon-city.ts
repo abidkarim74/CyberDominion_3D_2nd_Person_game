@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { CITY_SPAN, CITY_EDGE, ROAD_WIDTH, ROAD_STEP, ROAD_COORDS, occupiesRoad } from './city-layout';
+import { CITY_SPAN, CITY_EDGE, ROAD_WIDTH, ROAD_STEP, ROAD_COORDS, PLAYER_SPAWN, isCitySquare, occupiesRoad } from './city-layout';
+import { addCitySquare } from './city-square';
 import { CityAudio } from './city-audio';
 import { addIslandEnvironment } from './island-environment';
 import { collectWorldColliders, CAR_HALF_WIDTH, CAR_HALF_LENGTH, ColliderGrid, type WorldCollider } from './city-collision';
@@ -237,6 +238,7 @@ function addStreetlights(scene: THREE.Scene) {
     for (let zi = -8; zi <= 8; zi++) {
       const x = xi * 44;
       const z = zi * 44;
+      if (isCitySquare(x, z)) continue;
       if ((xi + zi) % 2 === 0) continue;
       const color = (xi + zi) % 4 === 1 ? 0x46e9ff : 0xff45ac;
       positions.push([x, z, color]);
@@ -318,6 +320,7 @@ export class NeonCityGame {
   private readonly environment: THREE.WebGLRenderTarget;
   private readonly island: ReturnType<typeof addIslandEnvironment>;
   private readonly reflections: ReturnType<typeof wetStreetReflection>;
+  private citySquare!: ReturnType<typeof addCitySquare>;
   private collisionWorld!: ColliderGrid;
   private cameraCollisionWorld!: ColliderGrid;
   private updateStreetLights!: ReturnType<typeof poolStreetLights>;
@@ -344,7 +347,7 @@ export class NeonCityGame {
   private readonly velocity = new THREE.Vector3();
   private readonly forward = new THREE.Vector3();
   private readonly right = new THREE.Vector3();
-  private readonly carPosition = new THREE.Vector3(-22, 0.015, -22);
+  private readonly carPosition = new THREE.Vector3(PLAYER_SPAWN.x, 0.015, PLAYER_SPAWN.z);
   private readonly previousPosition = new THREE.Vector3();
   private readonly colliders: BuildingCollider[] = [];
   private readonly coveredRoads: CoveredRoad[] = [{ x: -22, z: 88, hx: 9.5, hz: 13, ceiling: 11, label: 'CENTRAL TUNNEL' }];
@@ -645,8 +648,9 @@ export class NeonCityGame {
     this.smokeMesh.frustumCulled = false;
     this.smokeGeometry.setDrawRange(0, 0); this.smokeMesh.visible = false;
     this.scene.add(this.smokeMesh);
-    this.camera.position.set(-22, 6, -8);
-    this.camera.lookAt(0, 1.2, -2.2);
+    this.car.position.copy(this.carPosition);
+    this.camera.position.set(PLAYER_SPAWN.x + 9, 6, PLAYER_SPAWN.z + 14);
+    this.camera.lookAt(0, 6, 0);
     this.resize();
     // Prepare dormant weapons and nitro in the composer's color space before play.
     const previousTarget = this.renderer.getRenderTarget();
@@ -777,14 +781,14 @@ export class NeonCityGame {
       for (let along = -coverage; along < coverage; along += 11) {
         if (ROAD_COORDS.some(cross => Math.abs(along + 2.6 - cross) < 11)) continue;
         for (const lane of [-4.4, 4.4]) {
-          addQuad(lanePositions, along, street + lane - 0.055, along + 5.2, street + lane + 0.055, 0.034);
-          addQuad(lanePositions, street + lane - 0.055, along, street + lane + 0.055, along + 5.2, 0.034);
+          if (!isCitySquare(along + 2.6, street, 2.6)) addQuad(lanePositions, along, street + lane - 0.055, along + 5.2, street + lane + 0.055, 0.034);
+          if (!isCitySquare(street, along + 2.6, 2.6)) addQuad(lanePositions, street + lane - 0.055, along, street + lane + 0.055, along + 5.2, 0.034);
         }
       }
       for (const side of [-1, 1]) {
         for (let along = -coverage; along < coverage; along += 32) {
-          addQuad(glowPositions, along, street + side * 8.76 - 0.04, along + 18, street + side * 8.76 + 0.04, 0.035);
-          addQuad(glowPositions, street + side * 8.76 - 0.04, along, street + side * 8.76 + 0.04, along + 18, 0.035);
+          if (!isCitySquare(along + 9, street, 9)) addQuad(glowPositions, along, street + side * 8.76 - 0.04, along + 18, street + side * 8.76 + 0.04, 0.035);
+          if (!isCitySquare(street, along + 9, 9)) addQuad(glowPositions, street + side * 8.76 - 0.04, along, street + side * 8.76 + 0.04, along + 18, 0.035);
         }
       }
     }
@@ -812,6 +816,7 @@ export class NeonCityGame {
     const platformMatrix = new THREE.Matrix4();
     for (const xRoad of ROAD_COORDS.slice(0, -1)) {
       for (const zRoad of ROAD_COORDS.slice(0, -1)) {
+        if (isCitySquare(xRoad + ROAD_STEP / 2, zRoad + ROAD_STEP / 2)) continue;
         platformMatrix.setPosition(xRoad + ROAD_STEP / 2, 0.12, zRoad + ROAD_STEP / 2);
         const index = platforms.count;
         platforms.setMatrixAt(index, platformMatrix);
@@ -828,6 +833,7 @@ export class NeonCityGame {
       for (const zRoad of ROAD_COORDS.slice(0, -1)) {
         const x = xRoad + ROAD_STEP / 2;
         const z = zRoad + ROAD_STEP / 2;
+        if (isCitySquare(x, z)) { buildingIndex += 1; continue; }
         const plan = planSkylineBuilding(x, z, buildingIndex);
         skyline.push(plan);
         addSkylineBuilding(this.scene, styles, this.colliders, plan, signMaterials);
@@ -853,7 +859,6 @@ export class NeonCityGame {
     this.scenePointMaterials.push({ material: starsMesh.material, size: .7 });
     this.scene.add(starsMesh);
     addTunnel(this.scene, this.colliders);
-    addSkyBridge(this.scene, -44, 0x26dcf1);
     addSkyBridge(this.scene, 132, 0xff47a8);
     addSkyBridge(this.scene, -220, 0x26dcf1);
     addSkyBridge(this.scene, 264, 0xff47a8);
@@ -867,6 +872,7 @@ export class NeonCityGame {
     this.addHoloBillboards(styles);
     this.addNeonAvenues();
     this.addMonorail();
+    this.citySquare = addCitySquare(this.scene);
   }
 
   private addHoloBillboards(styles: FacadeStyle[]) {
@@ -921,6 +927,7 @@ export class NeonCityGame {
     const cyanPositions: number[] = [];
     const pinkPositions: number[] = [];
     for (let seg = -CITY_SPAN / 2; seg < CITY_SPAN / 2; seg += 16) {
+      if (isCitySquare(seg + 8, 0, 8)) continue;
       addQuad(cyanPositions, seg + 1, -.06, seg + 15, .06, .04);
       addQuad(pinkPositions, -.06, seg + 1, .06, seg + 15, .04);
     }
@@ -1248,7 +1255,7 @@ export class NeonCityGame {
   }
 
   private reset() {
-    this.carPosition.set(-22, 0.015, -22);
+    this.carPosition.set(PLAYER_SPAWN.x, 0.015, PLAYER_SPAWN.z);
     this.car.position.copy(this.carPosition);
     this.velocity.set(0, 0, 0);
     this.yaw = 0;
@@ -1265,6 +1272,7 @@ export class NeonCityGame {
     if (this.cameraView === 'person') this.setCameraView(this.drivingCamera);
     this.particles.length = 0;
     this.pressed.clear();
+    this.traffic.reset();
     this.steerInput = 0;
     this.boostCharge = 100;
     this.cancelNitro();
@@ -1741,6 +1749,7 @@ export class NeonCityGame {
     this.previousTime = time;
     this.elapsed += delta;
     this.cityScreenClock.value = this.elapsed;
+    this.citySquare.update(this.elapsed, delta);
     this.updateRenderQuality(frameMs, delta);
     this.roadSkidMarks.updateTime(this.elapsed);
     const occupied = this.person.mode === 'driving';
@@ -1874,6 +1883,7 @@ export class NeonCityGame {
     this.island.dispose();
     this.keyLight.shadow.map?.dispose();
     this.reflections.dispose();
+    this.citySquare.dispose();
     for (const pass of this.composer.passes) pass.dispose();
     this.composer.dispose();
     this.renderer.dispose();

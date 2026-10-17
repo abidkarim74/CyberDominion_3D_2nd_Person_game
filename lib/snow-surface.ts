@@ -1,4 +1,4 @@
-import { CITY_EDGE, ROAD_COORDS, ROAD_WIDTH, nearestRoad } from './city-layout';
+import { CITY_EDGE, ROAD_COORDS, ROAD_WIDTH, nearestRoad, isCitySquare } from './city-layout';
 import {
   ISLAND_HALF_SIZE,
   ISLAND_CORNER_CUT,
@@ -31,6 +31,7 @@ export function smooth01(value: number) {
   return t * t * (3 - 2 * t);
 }
 export function groundHeight(x: number, z: number) {
+  if (isCitySquare(x, z)) return 0.016;
   if (!isIslandLand(x, z)) return OCEAN_LEVEL;
   const nx = nearestRoad(x),
     nz = nearestRoad(z);

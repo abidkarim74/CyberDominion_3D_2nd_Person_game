@@ -4,6 +4,7 @@ import {
   ROAD_STEP,
   ROAD_WIDTH,
   nearestBlock,
+  isCitySquare,
 } from './city-layout';
 import type { CoveredRoad } from './city-infrastructure';
 import {
@@ -60,6 +61,7 @@ export function addRoadSnow(
       const start = indices.length,
         cx = xRoad + ROAD_STEP / 2,
         cz = zRoad + ROAD_STEP / 2;
+      if (isCitySquare(cx, cz)) continue;
       for (let side = 0; side < 4; side++) {
         const first = positions.length / 3;
         for (let segment = 0; segment <= SEGMENTS; segment++) {

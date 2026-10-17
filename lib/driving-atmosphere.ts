@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isCitySquare } from './city-layout';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 
 export function makeSpeedPass() {
@@ -19,6 +20,7 @@ export function makeSpeedPass() {
 export function addSteam(scene: THREE.Scene) {
   const positions: number[] = []; const phases: number[] = [];
   for (let x = -154; x <= 154; x += 44) for (let z = -154; z <= 154; z += 44) {
+    if (isCitySquare(x + 12.1, z - 5)) continue;
     for (let i = 0; i < 3; i++) {
       positions.push(x + 12.1, .5, z - 5); phases.push((i / 3 + (x + z + 308) / 700) % 1);
     }

@@ -12,6 +12,7 @@ type TrafficCar = {
   id: number; rig: Pick<CarRig, 'car' | 'body' | 'wheels' | 'steering' | 'brakeLights' | 'reverseLights'>;
   motion: VehicleMotion; previous: THREE.Vector3; contacts: SnowContact[];
   route: Route; progress: number; cruiseSpeed: number; input: VehicleInput;
+  start: { position: THREE.Vector3; yaw: number; progress: number; wheelAngles: number[] };
   marker: TrafficMarker; stuckTime: number; reverseTime: number; laps: number;
 };
 
@@ -168,11 +169,13 @@ export class AiTraffic {
 
   constructor(scene: THREE.Scene, source: CarRig, private readonly world: ColliderGrid,
     private readonly sample: (x: number, z: number, target: SnowContact) => SnowContact) {
-    const routes = [streetLoop(-22, -110, 110, 22, true), streetLoop(-22, -66, 66, 66, false),
-      streetLoop(-110, -66, 22, 66, true), streetLoop(-66, -110, 22, 22, false)];
+    // Keep the southern turns on 66: the tunnel on z=88 leaves no safe corner
+    // recovery space for the longer circuit that turns onto the street at z=110.
+    const routes = [streetLoop(-22, -110, 110, 66, true), streetLoop(-110, -66, 22, 66, false),
+      streetLoop(-22, -66, 66, 66, true), streetLoop(-66, -110, 22, 66, false)];
     const colors = [0x167bca, 0xf1c232, 0xeeeef3, 0x8650bd];
-    // First cars travel past the spawn in both directions; each follows its own circuit.
-    const spawn = [ { x: -17.6, z: -50 }, { x: -26.4, z: -48 }, { x: 17.6, z: -12 }, { x: -8, z: -114.4 } ];
+    // A north-facing launch grid in Nexus Square feeds four existing street circuits.
+    const spawn = [ { x: -17.6, z: 36 }, { x: 26.4, z: 36 }, { x: -17.6, z: 48 }, { x: 26.4, z: 48 } ];
     this.cars = routes.map((route, id) => {
       const position = new THREE.Vector3(spawn[id].x, .015, spawn[id].z);
       const progress = routeProjection(route, position), start = routeSample(route, progress);
@@ -184,10 +187,34 @@ export class AiTraffic {
       return { id, rig, motion: { position, velocity: new THREE.Vector3(), yaw: start.yaw, yawRate: 0, steeringAngle: 0, acceleration: 0, grip: .95, snow: 0 },
         previous: position.clone(), contacts: WHEEL_CONTACTS.map(() => makeSnowContact()), route, progress, cruiseSpeed: 10.5 + id * .8,
         input: { throttle: 0, brake: 0, steer: 0, handbrake: false, boost: false },
+        start: { position: position.clone(), yaw: start.yaw, progress, wheelAngles: rig.wheels.map(wheel => wheel.rotation.x) },
         marker: { x: position.x, z: position.z, yaw: start.yaw, color: `#${colors[id].toString(16).padStart(6, '0')}` },
         stuckTime: 0, reverseTime: 0, laps: 0 };
     });
     this.markers = this.cars.map(car => car.marker);
+  }
+
+  /** Return the complete launch grid immediately, including minimap and visual state. */
+  reset() {
+    this.collisions = 0;
+    for (const car of this.cars) {
+      const { motion, rig, start } = car;
+      motion.position.copy(start.position); motion.velocity.set(0, 0, 0);
+      motion.yaw = start.yaw; motion.yawRate = 0; motion.steeringAngle = 0;
+      motion.acceleration = 0; motion.grip = .95; motion.snow = 0;
+      car.previous.copy(start.position); car.progress = start.progress;
+      car.stuckTime = 0; car.reverseTime = 0; car.laps = 0;
+      car.input.throttle = 0; car.input.brake = 0; car.input.steer = 0;
+      car.input.handbrake = false; car.input.boost = false;
+      for (const contact of car.contacts) Object.assign(contact, makeSnowContact());
+      rig.car.position.copy(start.position); rig.car.rotation.y = start.yaw; rig.car.visible = true;
+      rig.body.rotation.x = 0; rig.body.rotation.z = 0;
+      rig.wheels.forEach((wheel, i) => { wheel.rotation.x = start.wheelAngles[i]; });
+      for (const pivot of rig.steering) pivot.rotation.y = 0;
+      for (const light of rig.brakeLights) (light.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.6;
+      for (const light of rig.reverseLights) (light.material as THREE.MeshStandardMaterial).emissiveIntensity = 0;
+      car.marker.x = start.position.x; car.marker.z = start.position.z; car.marker.yaw = start.yaw;
+    }
   }
 
   private control(car: TrafficCar, player: VehicleMotion, dt: number) {

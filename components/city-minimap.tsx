@@ -3,6 +3,8 @@
 import { forwardRef, memo, useImperativeHandle, useRef } from 'react';
 import {
   CITY_SPAN,
+  CITY_SQUARE_HALF_SIZE,
+  PLAYER_SPAWN,
   ROAD_COORDS,
   ROAD_STEP,
   ROAD_WIDTH,
@@ -26,10 +28,13 @@ const roadPath = ROAD_COORDS.map((road) => {
 }).join(' ');
 const blockPath = ROAD_COORDS.slice(0, -1)
   .flatMap((xRoad) =>
-    ROAD_COORDS.slice(0, -1).map((zRoad) => {
-      const x = xRoad + ROAD_STEP / 2 + half - 13;
-      const z = zRoad + ROAD_STEP / 2 + half - 13;
-      return `M ${x} ${z} h 26 v 26 h -26 Z`;
+    ROAD_COORDS.slice(0, -1).flatMap((zRoad) => {
+      const blockX = xRoad + ROAD_STEP / 2;
+      const blockZ = zRoad + ROAD_STEP / 2;
+      if (Math.abs(blockX) < CITY_SQUARE_HALF_SIZE && Math.abs(blockZ) < CITY_SQUARE_HALF_SIZE) return [];
+      const x = blockX + half - 13;
+      const z = blockZ + half - 13;
+      return [`M ${x} ${z} h 26 v 26 h -26 Z`];
     }),
   )
   .join(' ');
@@ -78,7 +83,7 @@ const CityMinimap = memo(
             className="minimap-svg"
             viewBox={`-64 -64 ${CITY_SPAN + 128} ${CITY_SPAN + 128}`}
             role="img"
-            aria-label={onFoot ? 'City streets with your walking position, parked car, and traffic. North is up.' : 'City streets with your car and traffic. North is up.'}
+            aria-label={onFoot ? 'City streets and central Nexus Square with your walking position, parked car, and traffic. North is up.' : 'City streets and central Nexus Square with your car and traffic. North is up.'}
           >
             <rect
               className="minimap-water"
@@ -96,6 +101,31 @@ const CityMinimap = memo(
             />
             <path className="minimap-road-centers" d={roadPath} />
             <path className="minimap-blocks" d={blockPath} />
+            <g data-city-square aria-label="Nexus Square, central starting plaza">
+              <title>NEXUS SQUARE · central starting plaza</title>
+              <rect
+                x={half - CITY_SQUARE_HALF_SIZE}
+                y={half - CITY_SQUARE_HALF_SIZE}
+                width={CITY_SQUARE_HALF_SIZE * 2}
+                height={CITY_SQUARE_HALF_SIZE * 2}
+                rx="7"
+                fill="#3be1ff"
+                fillOpacity="0.14"
+                stroke="#55e4ff"
+                strokeOpacity="0.7"
+                strokeWidth="2.5"
+              />
+              <path
+                d={`M ${half - CITY_SQUARE_HALF_SIZE} ${half + 24} V ${half + CITY_SQUARE_HALF_SIZE} H ${half - 24} M ${half + 24} ${half - CITY_SQUARE_HALF_SIZE} H ${half + CITY_SQUARE_HALF_SIZE} V ${half - 24}`}
+                fill="none"
+                stroke="#ee6dff"
+                strokeOpacity="0.85"
+                strokeWidth="4"
+              />
+              <circle cx={half} cy={half} r="23" fill="#ee6dff" fillOpacity="0.16" />
+              <circle cx={half} cy={half} r="13" fill="#172333" stroke="#79edff" strokeWidth="3" />
+              <circle cx={half} cy={half} r="5" fill="#f3c2ff" />
+            </g>
             {[0, 1, 2, 3].map(i => (
               <g key={i} ref={element => { trafficRefs.current[i] = element; }} data-traffic-marker visibility="hidden">
                 <circle r="10" stroke="#08101b" strokeWidth="4" />
@@ -110,7 +140,7 @@ const CityMinimap = memo(
               ref={markerRef}
               className="minimap-car"
               data-car-marker
-              transform={carMapTransform(-22, -22, 0)}
+              transform={carMapTransform(PLAYER_SPAWN.x, PLAYER_SPAWN.z, PLAYER_SPAWN.yaw)}
             >
               <circle className="minimap-car-halo" r="27" />
               <path

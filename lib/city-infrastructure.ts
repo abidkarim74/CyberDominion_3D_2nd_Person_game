@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { nearestRoad, nearestBlock } from './city-layout';
+import { nearestRoad, nearestBlock, isCitySquare } from './city-layout';
 
 type Collider = { x: number; z: number; hx: number; hz: number };
 export type CoveredRoad = Collider & { ceiling: number; label: string };
@@ -75,6 +75,8 @@ export function addInfrastructure(scene: THREE.Scene, colliders: Collider[]) {
     const { sideways, tunnel, label } = config;
     const x = sideways ? nearestBlock(config.x) : nearestRoad(config.x);
     const z = sideways ? nearestRoad(config.z) : nearestBlock(config.z);
+    // Roofs and crash barriers extend beyond their snapped street centers.
+    if (isCitySquare(x, z, 14)) continue;
     const group = new THREE.Group(); group.position.set(x, 0, z); group.rotation.y = sideways ? Math.PI / 2 : 0; scene.add(group);
     const length = 25, half = length / 2, ceiling = tunnel ? 7.8 : 7.2;
     covered.push({ x, z, hx: sideways ? half : 9.5, hz: sideways ? 9.5 : half, ceiling: ceiling + .5, label });
@@ -149,6 +151,7 @@ export function addInfrastructure(scene: THREE.Scene, colliders: Collider[]) {
   }
   // Street furniture is set behind the kerb: shelters, seats, cabinets and drain gratings.
   for (const [x, z] of [[-10.8, -22], [54.8, 22], [-98.8, 66], [142.8, -66], [10.8, 110], [-54.8, -110], [-186.8, 154], [230.8, -154], [-142.8, -198], [274.8, 110], [-318.8, 22], [10.8, -286]]) {
+    if (isCitySquare(x + 22, z - 22, 4)) continue;
     const shelter = new THREE.Group(); shelter.position.set(x + 22, 0, z - 22); scene.add(shelter);
     const side = x < 0 ? -1 : 1;
     for (const end of [-1, 1]) box(shelter, side * .65, 1.55, end * 2.3, .08, 2.8, .08, steel);
@@ -166,6 +169,7 @@ export function addInfrastructure(scene: THREE.Scene, colliders: Collider[]) {
   const manholeMat = new THREE.MeshStandardMaterial({ color: 0x343a3e, metalness: .45, roughness: .78 });
   for (let i = 0; i < 22; i++) {
     const x = ((i % 7) - 3) * 44 + 22 + 6.8, z = (Math.floor(i / 7) - 2) * 44;
+    if (isCitySquare(x, z)) continue;
     const cover = new THREE.Mesh(new THREE.CylinderGeometry(.48, .48, .026, 24), manholeMat);
     cover.position.set(x, .05, z); scene.add(cover);
     for (let j = 0; j < 4; j++) box(scene, x + (j - 1.5) * .15, .067, z, .027, .007, .62, rubber);
@@ -174,6 +178,7 @@ export function addInfrastructure(scene: THREE.Scene, colliders: Collider[]) {
   for (const x of [-308, -220, -132, -88, 0, 88, 132, 220, 308]) for (const z of [-286, -198, -110, -22, 66, 154, 242, 330]) for (const side of [-1, 1]) {
     const sx = nearestRoad(x) + side * 9.6;
     const blockZ = nearestBlock(z);
+    if (isCitySquare(sx, blockZ, 2)) continue;
     box(scene, sx, 3.9, blockZ, .12, 7.8, .12, steel);
     box(scene, sx - side * .6, 7.7, blockZ, 1.3, .1, .12, steel);
     box(scene, sx - side * 1.16, 7.6, blockZ, .48, .075, .7, coolLamp);

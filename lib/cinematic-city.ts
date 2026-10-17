@@ -3,6 +3,7 @@ import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { addCyberpunkDistrict, type DistrictInstanceCell } from './cyberpunk-district';
 import { GRAPHICS_PRESETS, type GraphicsQuality } from './graphics-quality';
+import { isCitySquare } from './city-layout';
 
 const CYAN = 0x35cde8;
 const PINK = 0xff347f;
@@ -325,6 +326,7 @@ export function addCityDetail(scene: THREE.Scene) {
   const trimMaterials = [cyan, pink];
   for (let ix = 0; ix < 17; ix++) for (let iz = 0; iz < 17; iz++) {
     const x = -352 + ix * 44; const z = -352 + iz * 44; const seed = ix * 17 + iz;
+    if (isCitySquare(x, z)) continue;
     const group = new THREE.Group(); group.position.set(x, 0, z); scene.add(group);
     const trim = trimMaterials[(ix + iz) % 2];
     // Slab joints and accessible corners surround the opaque district storefronts.
@@ -391,6 +393,7 @@ export function addCityDetail(scene: THREE.Scene) {
   const markings = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x82919d }), 18 * 18 * 16);
   let count = 0; const matrix = new THREE.Matrix4();
   for (let x = -374; x <= 374; x += 44) for (let z = -374; z <= 374; z += 44) {
+    if (isCitySquare(x, z)) continue;
     for (const side of [-1, 1]) for (let j = 0; j < 4; j++) {
       matrix.makeScale(.65, .012, 2); matrix.setPosition(x + (j - 1.5) * 1.5, .047, z + side * 8); markings.setMatrixAt(count++, matrix);
       matrix.makeScale(2, .012, .65); matrix.setPosition(x + side * 8, .047, z + (j - 1.5) * 1.5); markings.setMatrixAt(count++, matrix);

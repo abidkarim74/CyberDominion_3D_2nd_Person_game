@@ -73,11 +73,11 @@ try {
   await page.keyboard.press('r');
   const reset = await snapshot();
   assert.equal(reset.x, -22);
-  assert.equal(reset.z, -22);
+  assert.equal(reset.z, 40);
   assert.equal(reset.yaw, 0);
   checkSync(reset);
   await page.keyboard.down('s');
-  await page.waitForFunction(() => document.querySelector('.game-canvas').__drive.carPosition.z > -19);
+  await page.waitForFunction(() => document.querySelector('.game-canvas').__drive.carPosition.z > 43);
   await page.keyboard.up('s');
   const reversed = await snapshot();
   checkSync(reversed);
