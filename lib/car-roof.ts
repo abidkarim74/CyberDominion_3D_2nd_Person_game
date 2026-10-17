@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { createFieryRoofLivery } from './car-roof-livery';
 
 /** Isolate the authored upper shell while preserving every panel boundary. */
 function upperShellIndices(geometry: THREE.BufferGeometry) {
@@ -31,38 +30,95 @@ function upperShellIndices(geometry: THREE.BufferGeometry) {
   return { shell, rest };
 }
 
-/** Transparent pigment blends into lacquer instead of multiplying it by a decal. */
-function flamePaint(base: THREE.MeshPhysicalMaterial, livery: ReturnType<typeof createFieryRoofLivery>, fin = false) {
-  const material = base.clone();
-  material.name = fin ? 'Bugatti / airbrushed flame continuation on rear fin' : 'Bugatti / pearl lacquer with blended roof-to-rear flames';
-  material.map = livery.map;
-  material.emissiveMap = livery.emissiveMap;
-  material.emissive.setHex(0xffffff);
-  material.emissiveIntensity = .035;
-  material.customProgramCacheKey = () => `car-airbrushed-flames-v1/${fin ? 'fin' : 'upper-shell'}`;
-  material.onBeforeCompile = shader => {
-    const varying = 'varying vec3 vFlamePosition;\nvarying vec3 vFlameNormal;\n';
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n${varying}`)
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFlamePosition = position;\nvFlameNormal = normal;');
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${varying}`)
-      .replace('#include <map_fragment>', /* glsl */ `
-        // Every surface shares these car-local coordinates, including the fin.
-        vec2 flameUv = vec2((vFlamePosition.x + .92) / 1.84, (vFlamePosition.z + .56) / 2.8);
-        vec4 flamePigment = texture2D(map, flameUv);
-        float flameSurface = ${fin ? '1.0' : 'smoothstep(.25, .62, normalize(vFlameNormal).y)'};
-        diffuseColor.rgb = mix(diffuseColor.rgb, flamePigment.rgb, flamePigment.a * flameSurface);
-      `)
-      .replace('#include <emissivemap_fragment>', /* glsl */ `
-        totalEmissiveRadiance *= texture2D(emissiveMap, flameUv).rgb * flameSurface;
-      `);
-  };
-  return material;
+type Vertex = number[]; // Position, authored normal, and original UV.
+
+/** Split a polygon on a paint boundary, interpolating the original attributes. */
+function splitPolygon(polygon: Vertex[], distance: (vertex: Vertex) => number) {
+  const inside: Vertex[] = [], outside: Vertex[] = [];
+  for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i], b = polygon[(i + 1) % polygon.length];
+    const da = distance(a), db = distance(b);
+    (da >= 0 ? inside : outside).push(a);
+    if ((da >= 0) !== (db >= 0)) {
+      const t = da / (da - db);
+      const edge = a.map((value, component) => THREE.MathUtils.lerp(value, b[component], t));
+      inside.push(edge); outside.push(edge);
+    }
+  }
+  return { inside, outside };
 }
 
-/** Paint one flowing design across the roof, rear deck and center dorsal fin. */
-export function addFieryRoof(body: THREE.Group) {
+/** Indexed triangles share their original corners and retain smooth bevel normals. */
+function geometryBuilder() {
+  const positions: number[] = [], normals: number[] = [], uv: number[] = [], indices: number[] = [];
+  const vertices = new Map<string, number>();
+  return {
+    polygon(polygon: Vertex[]) {
+      if (polygon.length < 3) return;
+      const corners = polygon.map(vertex => {
+        const key = vertex.join(',');
+        let index = vertices.get(key);
+        if (index === undefined) {
+          index = vertices.size; vertices.set(key, index);
+          positions.push(...vertex.slice(0, 3));
+          const normal = new THREE.Vector3(...vertex.slice(3, 6) as [number, number, number]).normalize();
+          normals.push(normal.x, normal.y, normal.z); uv.push(vertex[6], vertex[7]);
+        }
+        return index;
+      });
+      for (let i = 1; i < corners.length - 1; i++) indices.push(corners[0], corners[i], corners[i + 1]);
+    },
+    finish() {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      geometry.setIndex(indices);
+      geometry.computeBoundingBox(); geometry.computeBoundingSphere();
+      return geometry;
+    },
+  };
+}
+
+/** Cut the stripe into the real hood surface, with no raised decal or depth overlap. */
+function addHoodStripe(body: THREE.Group, material: THREE.Material) {
+  const hood = body.getObjectByName('Blender Chiron / paint') as THREE.Mesh<THREE.BufferGeometry>;
+  const original = hood.geometry, position = original.getAttribute('position');
+  const normal = original.getAttribute('normal'), uv = original.getAttribute('uv'), index = original.getIndex()!;
+  const orange = geometryBuilder(), black = geometryBuilder();
+  // A narrow stripe widens from the horseshoe grille toward the windshield.
+  const halfWidth = (vertex: Vertex) => .09 + (vertex[2] + 2.35) * .032;
+  const boundaries = [
+    (v: Vertex) => v[2] + 2.35,
+    (v: Vertex) => -1.18 - v[2],
+    (v: Vertex) => v[0] + halfWidth(v),
+    (v: Vertex) => halfWidth(v) - v[0],
+  ];
+  for (let triangle = 0; triangle < index.count; triangle += 3) {
+    const face = [0, 1, 2].map(corner => {
+      const i = index.getX(triangle + corner);
+      return [position.getX(i), position.getY(i), position.getZ(i), normal.getX(i), normal.getY(i), normal.getZ(i), uv.getX(i), uv.getY(i)];
+    });
+    if (face.reduce((sum, vertex) => sum + vertex[4], 0) < .9 || face.some(vertex => vertex[1] < .55)) {
+      orange.polygon(face); continue;
+    }
+    let remaining = face;
+    for (const boundary of boundaries) {
+      const split = splitPolygon(remaining, boundary);
+      orange.polygon(split.outside); remaining = split.inside;
+      if (remaining.length < 3) break;
+    }
+    black.polygon(remaining);
+  }
+  hood.geometry = orange.finish(); original.dispose();
+  const stripe = new THREE.Mesh(black.finish(), material);
+  stripe.name = 'Bugatti / fitted black center hood stripe';
+  body.add(stripe);
+  return (stripe.geometry.index?.count ?? 0) / 3;
+}
+
+/** Reference livery: orange body, gloss-black roof/deck, and a narrow black hood stripe. */
+export function addReferenceLivery(body: THREE.Group) {
   const source = body.getObjectByName('Blender Chiron / secondaryPaint') as THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>;
   const { shell, rest } = upperShellIndices(source.geometry);
   const geometry = new THREE.BufferGeometry();
@@ -86,17 +142,20 @@ export function addFieryRoof(body: THREE.Group) {
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geometry.setIndex(indices);
   geometry.computeBoundingBox(); geometry.computeBoundingSphere();
-  const livery = createFieryRoofLivery();
-  const panel = new THREE.Mesh(geometry, flamePaint(source.material, livery));
-  panel.name = 'Bugatti / blended flame roof and rear deck';
+  const black = source.material.clone();
+  black.name = 'Bugatti / reference gloss black roof and hood stripe';
+  black.color.setHex(0x08090b);
+  black.metalness = .2; black.roughness = .20;
+  black.userData = { referenceBlackLacquer: true };
+  const panel = new THREE.Mesh(geometry, black);
+  panel.name = 'Bugatti / gloss black roof and rear deck';
   panel.userData.carPart = 'roof-and-rear-deck';
   body.add(panel);
   source.geometry.setIndex(rest);
   source.geometry.computeBoundingBox(); source.geometry.computeBoundingSphere();
-  for (const name of ['Bugatti / carbon center dorsal fin', 'Bugatti / red dorsal fin upper edge']) {
-    const fin = body.getObjectByName(name) as THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>;
-    fin.material = flamePaint(fin.material, livery, true);
-  }
-  body.userData.flameLivery = { style: 'Airbrushed pearl paint', shellTriangles: shell.length / 3,
-    surfaces: ['roof', 'rear deck', 'center rear fin'] };
+  const stripeTriangles = addHoodStripe(body, black);
+  body.userData.referenceLivery = {
+    style: 'Orange / gloss black roof / tapered black hood stripe',
+    roofTriangles: shell.length / 3, stripeTriangles,
+  };
 }

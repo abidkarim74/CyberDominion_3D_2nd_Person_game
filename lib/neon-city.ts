@@ -17,6 +17,7 @@ import { makePresentationPass } from './presentation-pass';
 import { addInfrastructure, type CoveredRoad } from './city-infrastructure';
 import { makeCar } from './cinematic-car';
 import { AiTraffic, type TrafficMarker } from './ai-traffic';
+import { AiPedestrians } from './ai-pedestrians';
 import { BULLET_SPEED, SHOT_IMPULSE, MINIGUN_SPIN, type GunShot } from './front-miniguns';
 import { projectileHitFraction } from './weapon-ballistics';
 import { addCityDetail, batchArchitecture, cityVisibility, cityEnvironment, poolStreetLights, wetStreetReflection } from './cinematic-city';
@@ -330,8 +331,10 @@ export class NeonCityGame {
   private reverseEngaged = false;
   private readonly carRig: ReturnType<typeof makeCar>;
   private readonly traffic: AiTraffic;
+  private readonly pedestrians: AiPedestrians;
   private readonly person: PersonController;
   private readonly personBlockers: VehicleBlocker[] = [];
+  private readonly pedestrianCarBlocker: VehicleBlocker = { x: -22, z: -22, yaw: 0, hx: CAR_HALF_WIDTH, hz: CAR_HALF_LENGTH };
   private readonly parkedMarker: TrafficMarker = { x: -22, z: -22, yaw: 0, color: '#ffcc7a' };
   private personCameraYaw = 0;
   private personCameraElevation = .22;
@@ -551,6 +554,8 @@ export class NeonCityGame {
     this.person = new PersonController(this.scene, this.cameraCollisionWorld, (x, z) => this.roadSnow.sample(x, z).height,
       this.carRig.body, this.carRig.cockpit.steeringWheel);
     this.person.resetDriving(this.carPosition, this.yaw);
+    this.pedestrians = new AiPedestrians(this.scene, cameraSolids, (x, z) => this.roadSnow.sample(x, z).height);
+    this.pedestrians.update(0, this.carPosition, this.graphicsQuality);
     this.updateWheelContacts();
     this.updateSnow();
 
@@ -1777,6 +1782,11 @@ export class NeonCityGame {
     }
     const focus = this.person.mode === 'driving' ? this.carPosition : this.person.position;
     this.traffic.updateVisuals(this.active ? delta : 0, focus);
+    this.pedestrianCarBlocker.x = this.carPosition.x; this.pedestrianCarBlocker.z = this.carPosition.z;
+    this.pedestrianCarBlocker.yaw = this.yaw;
+    this.personBlockers.push(this.pedestrianCarBlocker);
+    this.pedestrians.update(this.active ? delta : 0, focus, this.graphicsQuality,
+      this.personBlockers, occupied ? null : this.person.position);
     if (this.active) {
       this.parkedMarker.x = this.carPosition.x; this.parkedMarker.z = this.carPosition.z; this.parkedMarker.yaw = this.yaw;
       this.onMapPosition(focus.x, focus.z, this.person.mode === 'driving' ? this.yaw : this.person.yaw - Math.PI,
@@ -1807,6 +1817,7 @@ export class NeonCityGame {
     this.keyLight.target.position.copy(focus);
     const shadowChanged = this.shadowPosition.distanceToSquared(focus) > .0625 || Math.abs(this.shadowYaw - this.yaw) > .025 ||
       this.person.mode !== 'driving' ||
+      this.active && this.pedestrians.visible > 0 ||
       this.active && this.traffic.cars.some(car => car.rig.car.visible && car.motion.velocity.lengthSq() > .01);
     const shadowInterval = graphicsProfile.shadowInterval + this.qualityLevel * 3;
     this.renderer.shadowMap.needsUpdate = this.renderer.shadowMap.enabled && this.shadowFrame++ % shadowInterval === 0 && shadowChanged;
@@ -1841,6 +1852,7 @@ export class NeonCityGame {
     canvas.style.cursor = '';
     this.audio.dispose();
     this.person.destroy();
+    this.pedestrians.destroy();
     this.scene.traverse((object) => {
       if (object instanceof THREE.BatchedMesh) { object.customDepthMaterial?.dispose(); object.dispose(); }
       if (object instanceof THREE.Mesh || object instanceof THREE.Points || object instanceof THREE.LineSegments) {

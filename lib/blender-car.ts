@@ -8,12 +8,15 @@ export function addBlenderCarBody(body: THREE.Group, materials: CarMaterials) {
   const headlights: THREE.Mesh[] = [], brakeLights: THREE.Mesh[] = [];
   const textures = new THREE.TextureLoader();
   const materialMap: Record<string, THREE.Material> = { ...materials };
-  // The imported window/door surround is bright aluminum; dark gunmetal made
-  // the curved edge look like an open hole against the pearl-white paint.
+  // Dark intake/grille surrounds match the reference's black front fascia;
+  // retain a polished edge only around the cabin and sculpted side doors.
   const bodyTrim = new THREE.MeshStandardMaterial({
-    color: 0xdde1e6, metalness: .45, roughness: .24, envMapIntensity: 1.35,
+    color: 0x17191b, metalness: .55, roughness: .24, envMapIntensity: 1.35,
   });
-  bodyTrim.name = 'Bugatti / polished aluminum body trim';
+  bodyTrim.name = 'Bugatti / gloss black grille and bumper trim';
+  const cabinTrim = bodyTrim.clone();
+  cabinTrim.color.setHex(0xdde1e6);
+  cabinTrim.name = 'Bugatti / polished aluminum cabin surround';
   materialMap.alloy = bodyTrim;
   for (const [key, file] of Object.entries({ badge: 'badge.png', grille: 'grill1.png', grilleFine: 'grill2.png', grilleDense: 'grill3.png', lights: 'lights.png', interior: 'interior.png' })) {
     const map = textures.load(`/models/bugatti/${file}`);
@@ -54,7 +57,9 @@ export function addBlenderCarBody(body: THREE.Group, materials: CarMaterials) {
     geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(bytes(panel.index)), 1));
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
-    const mesh = new THREE.Mesh(geometry, materialMap[panel.material]);
+    const material = panel.material === 'alloy' && /Door|doorSurround/.test(panel.name)
+      ? cabinTrim : materialMap[panel.material];
+    const mesh = new THREE.Mesh(geometry, material);
     mesh.name = panel.name;
     mesh.userData.carPart = panel.part;
     if (panel.material === 'glass') {

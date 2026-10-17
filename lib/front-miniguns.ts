@@ -48,7 +48,7 @@ function flashMaterial(seed: number) {
   });
 }
 
-/** Exposed, permanently mounted weapons; only rigid metal is batched. */
+/** Concealed idle weapons deploy for firing; only rigid metal is batched. */
 export function createFrontMiniguns(parent: THREE.Object3D) {
   const mounts: THREE.Group[] = [], barrels: THREE.Group[] = [], muzzleAnchors: THREE.Object3D[] = [];
   const flashes: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>[] = [];
@@ -107,6 +107,7 @@ export function createFrontMiniguns(parent: THREE.Object3D) {
     flash.name = 'Hot core and turbulent muzzle fire'; flash.visible = false;
     rotor.add(flash); flashes.push(flash);
     mount.traverse(part => { part.userData.dynamic = true; });
+    mount.visible = false;
   }
   // Local warm spill keeps the flash grounded without another light in every city shader.
   const glow = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 1.7), new THREE.ShaderMaterial({
@@ -139,6 +140,7 @@ export function createFrontMiniguns(parent: THREE.Object3D) {
     for (let i = 0; i < 2; i++) {
       phase[i] = i * .5; recoil[i] = recoilVelocity[i] = heat[i] = flashLife[i] = shotCounts[i] = 0;
       barrels[i].position.z = 0; barrels[i].rotation.z = 0; flashes[i].visible = false;
+      mounts[i].visible = false;
     }
   };
   return {
@@ -180,6 +182,9 @@ export function createFrontMiniguns(parent: THREE.Object3D) {
           }
         }
       }
+      // Keep the clean reference bumper at rest and expose the unchanged gun
+      // geometry through its existing .65-second motor spin-down.
+      for (const mount of mounts) mount.visible = firing || spin > 0;
       for (let i = 0; i < 2; i++) {
         const flash = flashes[i]; flash.visible = firing && flashLife[i] > 0;
         flash.material.uniforms.time.value = elapsed; flash.material.uniforms.power.value = .72 + Math.random() * .28;

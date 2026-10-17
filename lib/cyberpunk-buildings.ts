@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { WorldCollider } from './city-collision';
+import { RETAIL_PODIUM_HALF_SIZE, RETAIL_PODIUM_HEIGHT } from './city-layout';
 import { animatedScreenMaterial, screenClock } from './city-screens';
 
 export type FacadeStyle = {
@@ -336,7 +337,14 @@ export function addSkylineBuilding(scene: THREE.Scene, styles: FacadeStyle[], co
   group.name = `Cyberpunk / ${SKYLINE_SHAPES[shape]}`; group.position.set(x, 0, z); group.rotation.y = quarterTurn * Math.PI / 2;
   group.userData.skylineBuilding = plan;
   const podiumW = Math.min(24.2, w + 1.1); const podiumD = Math.min(24.2, d + 1.1);
-  section(group, SHELL, .22, 4.1, podiumW, podiumD, w, d);
+  // A closed retail floor reaches all four storefronts and seals their corners.
+  // Keep it in permanent architecture so distance culling never removes the shop walls.
+  const retailSize = RETAIL_PODIUM_HALF_SIZE * 2;
+  const podium = box(group, 0, (.22 + RETAIL_PODIUM_HEIGHT) / 2, 0,
+    retailSize, RETAIL_PODIUM_HEIGHT - .22, retailSize, SHELL);
+  podium.name = 'Cyberpunk / solid retail podium';
+  const retailRoof = box(group, 0, RETAIL_PODIUM_HEIGHT + .05, 0, retailSize + .16, .18, retailSize + .16, ROOF);
+  retailRoof.name = 'Cyberpunk / retail roof slab';
   const wall = (y0: number, y1: number, w0: number, d0: number, w1 = w0, d1 = d0, x0 = 0, z0 = 0, x1 = x0, z1 = z0) => section(group, style.facade, y0, y1, w0, d0, w1, d1, x0, z0, x1, z1);
   const edge = (y: number, width: number, depth: number, cx = 0, cz = 0, material: THREE.Material = style.neon) => {
     // Four opaque facade strips use eight triangles rather than four twelve-triangle boxes.
@@ -498,5 +506,7 @@ export function addSkylineBuilding(scene: THREE.Scene, styles: FacadeStyle[], co
   });
   scene.userData.cyberpunkSkylineTriangles = (scene.userData.cyberpunkSkylineTriangles ?? 0) + triangles;
   const rotated = quarterTurn % 2 !== 0;
+  // The low retail volume gets its own geometry collider. Keep the upper tower's
+  // narrower footprint so cameras do not hit invisible walls above the shop roof.
   colliders.push({ x, z, hx: (rotated ? podiumD : podiumW) / 2 + .04, hz: (rotated ? podiumW : podiumD) / 2 + .04, maxY: h + mastHeight, label: group.name });
 }

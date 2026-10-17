@@ -71,7 +71,7 @@ export default function GraphicsSettings({ status, onQualityChange, onAutomaticC
     >
       <header className="graphics-header">
         <div>
-          <p className="graphics-eyebrow">NOCTURNE / VISUALS</p>
+          <p className="graphics-eyebrow">CyberDominion / VISUALS</p>
           <h2 id="graphics-settings-title">Make the night yours.</h2>
         </div>
         <button type="button" className="graphics-close" onClick={closeDialog} aria-label="Close graphics settings" title="Close (Escape)">×</button>

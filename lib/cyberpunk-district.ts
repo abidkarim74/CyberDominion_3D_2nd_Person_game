@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ROAD_STEP } from './city-layout';
+import { ROAD_STEP, RETAIL_PODIUM_HALF_SIZE } from './city-layout';
 import { animatedScreenMaterial, screenClock } from './city-screens';
 
 type AtlasTile = { x: number; y: number; width: number; height: number };
@@ -284,13 +284,16 @@ export function addCyberpunkDistrict(scene: THREE.Scene) {
       const face = new THREE.Group(); face.rotation.y = side * Math.PI / 2; block.add(face);
       const color = neon[(seed + side) % neon.length];
       // All pavement props stay inside 12.8 m from the block center; lanes start at 13 m.
-      // The largest tower podium reaches 12.1 m. Detail planes must sit beyond it.
-      box(face, 0, 1.98, 12.16, 22.55, 3.48, .16, concrete);
+      // The solid building supplies the backing; wrap the exposed ends around
+      // its corners rather than leaving four detached facade panels.
+      for (const end of [-1, 1]) box(face, end * (RETAIL_PODIUM_HALF_SIZE - .5), 1.98,
+        RETAIL_PODIUM_HALF_SIZE + .015, 1, 3.48, .08, concrete);
       for (const division of [-11.1, -3.67, 3.67, 11.1]) box(face, division, 1.93, 12.285, .13, 3.32, .19, steel);
       for (let shop = 0; shop < 3; shop++) {
         const shopIndex = (seed + side * 3 + shop) % atlas.shops.length;
         const shopX = (shop - 1) * 7.35;
-        panel(face, atlas.shops[shopIndex], shopX, 1.97, 12.255, 7.14, 3.17);
+        const storefront = panel(face, atlas.shops[shopIndex], shopX, 1.97, RETAIL_PODIUM_HALF_SIZE + .015, 7.14, 3.17);
+        storefront.name = 'Cyberpunk / shop storefront';
         const awningHeight = 3.85 + ((seed + shop + side) % 3) * .12;
         const awning = box(face, shopX, awningHeight, 12.32, 7.17, .12, .69, (shopIndex % 3 === 0 ? rust : steel));
         awning.rotation.x = .12;

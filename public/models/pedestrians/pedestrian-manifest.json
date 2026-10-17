@@ -1,0 +1,493 @@
+{
+  "sourcePlayerModel": "artifacts/blender/person.blend",
+  "sourcePlayerSHA256": "0d44071b9fe0adae7fa3abe7cbf8bb71f92665d0e2c7f2a02a52850f91b89a36",
+  "forward": "+Z",
+  "up": "+Y",
+  "anatomyStandingHeightMeters": 1.8,
+  "runtimeBaseScale": 0.8464,
+  "materialTintNames": [
+    "Pedestrian_Coat",
+    "Pedestrian_Trousers",
+    "Pedestrian_Boots",
+    "Pedestrian_Scarf",
+    "Pedestrian_Hat",
+    "Pedestrian_Hair",
+    "Pedestrian_Skin"
+  ],
+  "variants": [
+    {
+      "name": "parka",
+      "url": "/models/pedestrians/parka.glb",
+      "authoredHeightMeters": 1.8390514518032433,
+      "idleBounds": {
+        "min": [
+          -0.2780095636844635,
+          -0.29943475127220154,
+          -8.11482677818276e-05
+        ],
+        "max": [
+          0.2686122953891754,
+          0.24943935871124268,
+          1.8389703035354614
+        ]
+      },
+      "walkGrounding": [
+        {
+          "frame": 0,
+          "sourceMinZ": -0.04448714107275009,
+          "correctionMeters": 0.04448714107275009,
+          "groundedMinZ": -3.516860402896782e-08
+        },
+        {
+          "frame": 3,
+          "sourceMinZ": -0.04204195365309715,
+          "correctionMeters": 0.04204195365309715,
+          "groundedMinZ": -9.84729009445573e-09
+        },
+        {
+          "frame": 6,
+          "sourceMinZ": -0.02460683509707451,
+          "correctionMeters": 0.02460683509707451,
+          "groundedMinZ": 4.542803822005226e-08
+        },
+        {
+          "frame": 9,
+          "sourceMinZ": -0.01944996975362301,
+          "correctionMeters": 0.01944996975362301,
+          "groundedMinZ": -1.7283504405440908e-08
+        },
+        {
+          "frame": 12,
+          "sourceMinZ": -0.02214554324746132,
+          "correctionMeters": 0.02214554324746132,
+          "groundedMinZ": 3.749373078676399e-08
+        },
+        {
+          "frame": 15,
+          "sourceMinZ": -0.03819817304611206,
+          "correctionMeters": 0.03819817304611206,
+          "groundedMinZ": 1.7932219265048843e-08
+        },
+        {
+          "frame": 18,
+          "sourceMinZ": -0.04256446287035942,
+          "correctionMeters": 0.04256446287035942,
+          "groundedMinZ": -1.7191005952099658e-08
+        },
+        {
+          "frame": 21,
+          "sourceMinZ": -0.026619311422109604,
+          "correctionMeters": 0.026619311422109604,
+          "groundedMinZ": 2.284647138139917e-08
+        },
+        {
+          "frame": 24,
+          "sourceMinZ": -0.00916874036192894,
+          "correctionMeters": 0.00916874036192894,
+          "groundedMinZ": 1.4794965252917791e-08
+        },
+        {
+          "frame": 27,
+          "sourceMinZ": -0.01741560734808445,
+          "correctionMeters": 0.01741560734808445,
+          "groundedMinZ": 1.6555342652324612e-09
+        },
+        {
+          "frame": 30,
+          "sourceMinZ": -0.038325633853673935,
+          "correctionMeters": 0.038325633853673935,
+          "groundedMinZ": -9.253165345057823e-09
+        }
+      ],
+      "headShapeDescription": "broader jaw and cheeks; shorter face",
+      "headwear": "rib-knit beanie",
+      "hairStyle": "cropped waves",
+      "sourcePlayerModel": "artifacts/blender/person.blend",
+      "sourcePlayerSHA256": "0d44071b9fe0adae7fa3abe7cbf8bb71f92665d0e2c7f2a02a52850f91b89a36",
+      "sourceBlend": "artifacts/blender/pedestrians-parka.blend",
+      "sha256": "aece5f2ab0d28d5d2a73e154c15abc0083cb1cc054b5a95890419a533714b32e",
+      "meshes": 9,
+      "materials": [
+        "Pedestrian_Eyelashes",
+        "Pedestrian_Eyes",
+        "Pedestrian_Hair",
+        "Pedestrian_Scarf",
+        "Pedestrian_Coat",
+        "Pedestrian_Hat",
+        "Pedestrian_Trousers",
+        "Pedestrian_Boots",
+        "Pedestrian_Skin"
+      ],
+      "skins": 1,
+      "textures": 12,
+      "vertices": 19864,
+      "triangles": 32744,
+      "glbBytes": 2601508,
+      "clips": [
+        {
+          "name": "Idle",
+          "durationSeconds": 8
+        },
+        {
+          "name": "Walk",
+          "durationSeconds": 1.0333333333333334
+        }
+      ]
+    },
+    {
+      "name": "puffer",
+      "url": "/models/pedestrians/puffer.glb",
+      "authoredHeightMeters": 1.8059824372539879,
+      "idleBounds": {
+        "min": [
+          -0.2855415940284729,
+          -0.3042638301849365,
+          -8.11482677818276e-05
+        ],
+        "max": [
+          0.27520430088043213,
+          0.2568562924861908,
+          1.805901288986206
+        ]
+      },
+      "walkGrounding": [
+        {
+          "frame": 0,
+          "sourceMinZ": -0.04448714107275009,
+          "correctionMeters": 0.04448714107275009,
+          "groundedMinZ": -3.516860402896782e-08
+        },
+        {
+          "frame": 3,
+          "sourceMinZ": -0.04204195365309715,
+          "correctionMeters": 0.04204195365309715,
+          "groundedMinZ": -9.84729009445573e-09
+        },
+        {
+          "frame": 6,
+          "sourceMinZ": -0.02460683509707451,
+          "correctionMeters": 0.02460683509707451,
+          "groundedMinZ": 4.542803822005226e-08
+        },
+        {
+          "frame": 9,
+          "sourceMinZ": -0.01944996975362301,
+          "correctionMeters": 0.01944996975362301,
+          "groundedMinZ": -1.7283504405440908e-08
+        },
+        {
+          "frame": 12,
+          "sourceMinZ": -0.02214554324746132,
+          "correctionMeters": 0.02214554324746132,
+          "groundedMinZ": 3.749373078676399e-08
+        },
+        {
+          "frame": 15,
+          "sourceMinZ": -0.03819817304611206,
+          "correctionMeters": 0.03819817304611206,
+          "groundedMinZ": 1.7932219265048843e-08
+        },
+        {
+          "frame": 18,
+          "sourceMinZ": -0.04256446287035942,
+          "correctionMeters": 0.04256446287035942,
+          "groundedMinZ": -1.7191005952099658e-08
+        },
+        {
+          "frame": 21,
+          "sourceMinZ": -0.026619311422109604,
+          "correctionMeters": 0.026619311422109604,
+          "groundedMinZ": 2.284647138139917e-08
+        },
+        {
+          "frame": 24,
+          "sourceMinZ": -0.00916874036192894,
+          "correctionMeters": 0.00916874036192894,
+          "groundedMinZ": 1.4794965252917791e-08
+        },
+        {
+          "frame": 27,
+          "sourceMinZ": -0.01741560734808445,
+          "correctionMeters": 0.01741560734808445,
+          "groundedMinZ": 1.6555342652324612e-09
+        },
+        {
+          "frame": 30,
+          "sourceMinZ": -0.038325633853673935,
+          "correctionMeters": 0.038325633853673935,
+          "groundedMinZ": -9.253165345057823e-09
+        }
+      ],
+      "headShapeDescription": "narrow oval face; fine jaw and longer forehead",
+      "headwear": "padded high collar; no hat",
+      "hairStyle": "textured swept crop",
+      "sourcePlayerModel": "artifacts/blender/person.blend",
+      "sourcePlayerSHA256": "0d44071b9fe0adae7fa3abe7cbf8bb71f92665d0e2c7f2a02a52850f91b89a36",
+      "sourceBlend": "artifacts/blender/pedestrians-puffer.blend",
+      "sha256": "df1a2239eb16f71a6de669501a73075392823ebe9af0acebb565a63776c69d18",
+      "meshes": 8,
+      "materials": [
+        "Pedestrian_Eyelashes",
+        "Pedestrian_Eyes",
+        "Pedestrian_Hair",
+        "Pedestrian_Scarf",
+        "Pedestrian_Coat",
+        "Pedestrian_Trousers",
+        "Pedestrian_Boots",
+        "Pedestrian_Skin"
+      ],
+      "skins": 1,
+      "textures": 12,
+      "vertices": 18244,
+      "triangles": 29544,
+      "glbBytes": 2496480,
+      "clips": [
+        {
+          "name": "Idle",
+          "durationSeconds": 8
+        },
+        {
+          "name": "Walk",
+          "durationSeconds": 1.0333333333333334
+        }
+      ]
+    },
+    {
+      "name": "wool-coat",
+      "url": "/models/pedestrians/wool-coat.glb",
+      "authoredHeightMeters": 1.79385181915859,
+      "idleBounds": {
+        "min": [
+          -0.2747149169445038,
+          -0.3001696467399597,
+          -8.11482677818276e-05
+        ],
+        "max": [
+          0.2657347023487091,
+          0.24712859094142914,
+          1.793770670890808
+        ]
+      },
+      "walkGrounding": [
+        {
+          "frame": 0,
+          "sourceMinZ": -0.04448714107275009,
+          "correctionMeters": 0.04448714107275009,
+          "groundedMinZ": -3.516860402896782e-08
+        },
+        {
+          "frame": 3,
+          "sourceMinZ": -0.04204195365309715,
+          "correctionMeters": 0.04204195365309715,
+          "groundedMinZ": -9.84729009445573e-09
+        },
+        {
+          "frame": 6,
+          "sourceMinZ": -0.02460683509707451,
+          "correctionMeters": 0.02460683509707451,
+          "groundedMinZ": 4.542803822005226e-08
+        },
+        {
+          "frame": 9,
+          "sourceMinZ": -0.01944996975362301,
+          "correctionMeters": 0.01944996975362301,
+          "groundedMinZ": -1.7283504405440908e-08
+        },
+        {
+          "frame": 12,
+          "sourceMinZ": -0.02214554324746132,
+          "correctionMeters": 0.02214554324746132,
+          "groundedMinZ": 3.749373078676399e-08
+        },
+        {
+          "frame": 15,
+          "sourceMinZ": -0.03819817304611206,
+          "correctionMeters": 0.03819817304611206,
+          "groundedMinZ": 1.7932219265048843e-08
+        },
+        {
+          "frame": 18,
+          "sourceMinZ": -0.04256446287035942,
+          "correctionMeters": 0.04256446287035942,
+          "groundedMinZ": -1.7191005952099658e-08
+        },
+        {
+          "frame": 21,
+          "sourceMinZ": -0.026619311422109604,
+          "correctionMeters": 0.026619311422109604,
+          "groundedMinZ": 2.284647138139917e-08
+        },
+        {
+          "frame": 24,
+          "sourceMinZ": -0.00916874036192894,
+          "correctionMeters": 0.00916874036192894,
+          "groundedMinZ": 1.4794965252917791e-08
+        },
+        {
+          "frame": 27,
+          "sourceMinZ": -0.01741560734808445,
+          "correctionMeters": 0.01741560734808445,
+          "groundedMinZ": 1.6555342652324612e-09
+        },
+        {
+          "frame": 30,
+          "sourceMinZ": -0.038325633853673935,
+          "correctionMeters": 0.038325633853673935,
+          "groundedMinZ": -9.253165345057823e-09
+        }
+      ],
+      "headShapeDescription": "wide cheekbones and prominent nose",
+      "headwear": "uncovered swept hair",
+      "hairStyle": "side swept waves",
+      "sourcePlayerModel": "artifacts/blender/person.blend",
+      "sourcePlayerSHA256": "0d44071b9fe0adae7fa3abe7cbf8bb71f92665d0e2c7f2a02a52850f91b89a36",
+      "sourceBlend": "artifacts/blender/pedestrians-wool-coat.blend",
+      "sha256": "bd122f4b76bf329874069d69e99d01177b3452d2d64e360beeabd087b714f5bd",
+      "meshes": 8,
+      "materials": [
+        "Pedestrian_Eyelashes",
+        "Pedestrian_Eyes",
+        "Pedestrian_Hair",
+        "Pedestrian_Scarf",
+        "Pedestrian_Coat",
+        "Pedestrian_Trousers",
+        "Pedestrian_Boots",
+        "Pedestrian_Skin"
+      ],
+      "skins": 1,
+      "textures": 12,
+      "vertices": 18059,
+      "triangles": 29917,
+      "glbBytes": 2489140,
+      "clips": [
+        {
+          "name": "Idle",
+          "durationSeconds": 8
+        },
+        {
+          "name": "Walk",
+          "durationSeconds": 1.0333333333333334
+        }
+      ]
+    },
+    {
+      "name": "anorak",
+      "url": "/models/pedestrians/anorak.glb",
+      "authoredHeightMeters": 1.8390514518032433,
+      "idleBounds": {
+        "min": [
+          -0.28192856907844543,
+          -0.30006980895996094,
+          -8.11482677818276e-05
+        ],
+        "max": [
+          0.2720448672771454,
+          0.25247639417648315,
+          1.8389703035354614
+        ]
+      },
+      "walkGrounding": [
+        {
+          "frame": 0,
+          "sourceMinZ": -0.04448714107275009,
+          "correctionMeters": 0.04448714107275009,
+          "groundedMinZ": -3.516860402896782e-08
+        },
+        {
+          "frame": 3,
+          "sourceMinZ": -0.04204195365309715,
+          "correctionMeters": 0.04204195365309715,
+          "groundedMinZ": -9.84729009445573e-09
+        },
+        {
+          "frame": 6,
+          "sourceMinZ": -0.02460683509707451,
+          "correctionMeters": 0.02460683509707451,
+          "groundedMinZ": 4.542803822005226e-08
+        },
+        {
+          "frame": 9,
+          "sourceMinZ": -0.01944996975362301,
+          "correctionMeters": 0.01944996975362301,
+          "groundedMinZ": -1.7283504405440908e-08
+        },
+        {
+          "frame": 12,
+          "sourceMinZ": -0.02214554324746132,
+          "correctionMeters": 0.02214554324746132,
+          "groundedMinZ": 3.749373078676399e-08
+        },
+        {
+          "frame": 15,
+          "sourceMinZ": -0.03819817304611206,
+          "correctionMeters": 0.03819817304611206,
+          "groundedMinZ": 1.7932219265048843e-08
+        },
+        {
+          "frame": 18,
+          "sourceMinZ": -0.04256446287035942,
+          "correctionMeters": 0.04256446287035942,
+          "groundedMinZ": -1.7191005952099658e-08
+        },
+        {
+          "frame": 21,
+          "sourceMinZ": -0.026619311422109604,
+          "correctionMeters": 0.026619311422109604,
+          "groundedMinZ": 2.284647138139917e-08
+        },
+        {
+          "frame": 24,
+          "sourceMinZ": -0.00916874036192894,
+          "correctionMeters": 0.00916874036192894,
+          "groundedMinZ": 1.4794965252917791e-08
+        },
+        {
+          "frame": 27,
+          "sourceMinZ": -0.01741560734808445,
+          "correctionMeters": 0.01741560734808445,
+          "groundedMinZ": 1.6555342652324612e-09
+        },
+        {
+          "frame": 30,
+          "sourceMinZ": -0.038325633853673935,
+          "correctionMeters": 0.038325633853673935,
+          "groundedMinZ": -9.253165345057823e-09
+        }
+      ],
+      "headShapeDescription": "rounded forehead; tapered jaw and deeper nose",
+      "headwear": "knit trapper cap with ear flaps",
+      "hairStyle": "short waves under cap",
+      "sourcePlayerModel": "artifacts/blender/person.blend",
+      "sourcePlayerSHA256": "0d44071b9fe0adae7fa3abe7cbf8bb71f92665d0e2c7f2a02a52850f91b89a36",
+      "sourceBlend": "artifacts/blender/pedestrians-anorak.blend",
+      "sha256": "d3220f5e66ff62704a5bf009533f66f0034caa5fcbd80b14b357bd6278e6193b",
+      "meshes": 9,
+      "materials": [
+        "Pedestrian_Eyelashes",
+        "Pedestrian_Eyes",
+        "Pedestrian_Hair",
+        "Pedestrian_Scarf",
+        "Pedestrian_Coat",
+        "Pedestrian_Hat",
+        "Pedestrian_Trousers",
+        "Pedestrian_Boots",
+        "Pedestrian_Skin"
+      ],
+      "skins": 1,
+      "textures": 12,
+      "vertices": 19907,
+      "triangles": 32792,
+      "glbBytes": 2604048,
+      "clips": [
+        {
+          "name": "Idle",
+          "durationSeconds": 8
+        },
+        {
+          "name": "Walk",
+          "durationSeconds": 1.0333333333333334
+        }
+      ]
+    }
+  ]
+}

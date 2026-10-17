@@ -11,7 +11,7 @@ import { addPerformanceTire, createPerformanceTireAssets } from './performance-t
 import { createCeramicRotorMaps, createLacquerMaps } from './car-surface-textures';
 import { addBugattiBrakes, createBugattiBrakeAssets } from './car-brake-details';
 import { addCarExteriorDetails } from './car-exterior-details';
-import { addFieryRoof } from './car-roof';
+import { addReferenceLivery } from './car-roof';
 
 /** Small repeating 2x2 twill; all fiber detail is generated once at startup. */
 function makeCarbonTexture(): THREE.CanvasTexture {
@@ -83,9 +83,9 @@ export function makeCar() {
   const lacquerMaps = createLacquerMaps();
   const tireAssets = createPerformanceTireAssets();
 
-  // Pearl-white lacquer keeps the entire silhouette readable in the night city.
+  // Gloss orange lacquer matches the reference's orange-and-black bodywork.
   const paint = new THREE.MeshPhysicalMaterial({
-    color: 0xebeeea,
+    color: 0xff7800,
     metalness: 0.12,
     roughness: 0.22,
     roughnessMap: lacquerMaps.roughness,
@@ -96,10 +96,10 @@ export function makeCar() {
     ior: 1.54,
     envMapIntensity: 1.5,
   });
-  paint.name = 'Bugatti / pearl white gloss clearcoat';
+  paint.name = 'Bugatti / reference orange gloss clearcoat';
   paint.userData.vehiclePaint = true;
   const secondaryPaint = paint.clone();
-  secondaryPaint.name = 'Bugatti / pearl white rear shell';
+  secondaryPaint.name = 'Bugatti / reference orange rear shell';
 
   // Authentic 2x2 twill weave carbon fiber with micro bump definition
   const carbon = new THREE.MeshPhysicalMaterial({
@@ -126,13 +126,13 @@ export function makeCar() {
   });
   alloy.name = 'Car / machined gunmetal alloy';
   const wheelAlloy = new THREE.MeshStandardMaterial({
-    color: 0x87919a, metalness: .88, roughness: .28, envMapIntensity: 1.25,
+    color: 0x111214, metalness: .88, roughness: .28, envMapIntensity: 1.25,
   });
-  wheelAlloy.name = 'Bugatti / satin titanium forged wheels';
+  wheelAlloy.name = 'Bugatti / satin black forged wheels';
   const polishedRim = new THREE.MeshStandardMaterial({
-    color: 0xc5cbd0, metalness: .96, roughness: .19, envMapIntensity: 1.4,
+    color: 0x27292c, metalness: .96, roughness: .19, envMapIntensity: 1.4,
   });
-  polishedRim.name = 'Bugatti / polished machined wheel lips';
+  polishedRim.name = 'Bugatti / polished black wheel lips';
   const wheelBadge = new THREE.MeshStandardMaterial({
     color: 0xffffff, map: makeWheelBadgeTexture(), metalness: .25, roughness: .27,
   });
@@ -160,7 +160,7 @@ export function makeCar() {
   const white = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xf0f6ff).multiplyScalar(2.4), toneMapped: false });
   const redAccent = new THREE.MeshStandardMaterial({ color: 0xc5091b, metalness: .25, roughness: .30 });
 
-  const amber = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffb45c).multiplyScalar(1.05), toneMapped: false });
+  const amber = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff790d).multiplyScalar(.9), toneMapped: false });
   const brakeMat = new THREE.MeshStandardMaterial({
     color: 0x480308,
     emissive: 0xee1422,
@@ -197,7 +197,7 @@ export function makeCar() {
   trim.name = 'Car / recessed satin trim';
   const { headlights, brakeLights } = addBlenderCarBody(body, { paint, secondaryPaint, carbon, alloy, amber, glass, trim, redAccent, white, red: brakeMat });
   addBugattiRearAero(body, { carbon, paint, trim, alloy });
-  addFieryRoof(body);
+  addReferenceLivery(body);
   addCarExteriorDetails(body, { carbon, paint, trim, alloy });
 
   const cockpit = addDriverCockpit(body, { carbon, alloy, cyan });

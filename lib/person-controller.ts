@@ -6,6 +6,7 @@ import { PersonIdleMotion } from './person-idle-motion';
 import { PersonSeatMotion } from './person-seat-motion';
 import { PersonSteeringMotion } from './person-steering-motion';
 import { PersonDriverVisibility } from './person-driver-visibility';
+import { PERSON_WORLD_SCALE } from './person-scale';
 
 export type PersonMode = 'driving' | 'walking' | 'entering' | 'exiting';
 export type VehicleBlocker = { x: number; z: number; yaw: number; hx: number; hz: number };
@@ -29,7 +30,7 @@ type Transition = {
   carYaw: number;
 };
 
-const PERSON_SCALE = .92 * .92;
+const PERSON_SCALE = PERSON_WORLD_SCALE;
 const RADIUS = .30, HEIGHT = 1.8 * PERSON_SCALE, WALK_SPEED = 1.65, RUN_SPEED = 4.3;
 const TRANSITION_SECONDS = 3.2, INTERACT_DISTANCE = 2.05, INTERACT_SPEED = 1;
 const ROAD_ANKLE_CLEARANCE = .145, CABIN_ANKLE_HEIGHT = .55;

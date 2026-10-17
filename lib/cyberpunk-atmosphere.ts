@@ -50,7 +50,7 @@ export function makeHologramTexture(index: number) {
   c.fillRect(20, 20, 5, 344);
   c.fillRect(38, 20, 454, 2);
   c.font = '12px monospace';
-  c.fillText('NOCTURNE / CIVIC BROADCAST', 40, 42);
+  c.fillText('CYBERDOMINION / CIVIC BROADCAST', 40, 42);
   c.textAlign = 'right';
   c.fillText('CH. 0' + (index + 1), 486, 42);
   c.textAlign = 'left';

@@ -78,13 +78,13 @@ export default function Game() {
         ref={canvasRef}
         className="game-canvas"
         tabIndex={0}
-        aria-label={onFoot ? 'Neon city walking game, third-person camera' : 'Neon city driving game'}
+        aria-label={onFoot ? 'CyberDominion walking game, third-person camera' : 'CyberDominion driving game'}
       />
       <div className="screen-grade" aria-hidden="true" />
       <div className="scanlines" aria-hidden="true" />
       <div className="city-ident" aria-hidden="true">
-        <span className="city-ident-mark">NN<span>07</span></span>
-        <span className="city-ident-copy">NOCTURNE<span>COASTAL GRID / NIGHT DRIVE</span></span>
+        <span className="city-ident-mark">CD<span>07</span></span>
+        <span className="city-ident-copy">CyberDominion<span>COASTAL GRID / NIGHT DRIVE</span></span>
       </div>
 
       <button
@@ -117,9 +117,9 @@ export default function Game() {
       >
         <div className="title-lockup">
           <p className="title-eyebrow"><span /> THE CITY NEVER SLEEPS</p>
-          <h1 className="game-title">
-            <span>NEON</span>
-            <span className="title-second-line">NOCTURNE</span>
+          <h1 className="game-title" aria-label="CyberDominion">
+            <span>CYBER</span>
+            <span className="title-second-line">DOMINION</span>
           </h1>
           <p className="game-intro">Cold streets. Electric skyline.<br />Take the city after dark.</p>
           <button type="button" className="play-button" onClick={play}>

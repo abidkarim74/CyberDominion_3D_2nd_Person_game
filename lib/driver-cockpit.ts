@@ -26,11 +26,17 @@ function upholsteredGeometry(size: Point, radius: number) {
 export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
   const leatherMap = makeCabinLeather(), quiltingMap = makeCabinLeather(true);
   const detailAtlas = makeCabinDetailAtlas(), instruments = makeBugattiInstruments();
-  const leather = new THREE.MeshStandardMaterial({ color: 0x777d87, map: leatherMap, bumpMap: leatherMap, bumpScale: .00055,
-    roughness: .83, metalness: .025, emissive: 0x131a23, emissiveIntensity: .23, envMapIntensity: .6 });
-  leather.name = 'Bugatti cabin / fine grained anthracite leather';
-  const quilting = leather.clone(); quilting.map = quilting.bumpMap = quiltingMap;
-  quilting.color.setHex(0x7e838b); quilting.bumpScale = .0022; quilting.name = 'Bugatti cabin / diamond stitched leather';
+  const leather = new THREE.MeshStandardMaterial({ color: 0x25262a, map: leatherMap, bumpMap: leatherMap, bumpScale: .00055,
+    roughness: .83, metalness: .025, emissive: 0x141414, emissiveIntensity: .23, envMapIntensity: .6 });
+  leather.name = 'Bugatti cabin / fine grained black leather';
+  // The reference uses orange hide framed by black bolsters. Reuse the grain
+  // as a bump map so its gray albedo does not muddy the saturated upholstery.
+  const orangeLeather = leather.clone(); orangeLeather.map = null;
+  orangeLeather.color.setHex(0xe16c16); orangeLeather.emissive.setHex(0x6c2705);
+  orangeLeather.emissiveIntensity = .14; orangeLeather.roughness = .76;
+  orangeLeather.name = 'Bugatti cabin / burnt orange leather inserts';
+  const quilting = orangeLeather.clone(); quilting.bumpMap = quiltingMap;
+  quilting.bumpScale = .0022; quilting.name = 'Bugatti cabin / orange diamond stitched leather';
   const metal = new THREE.MeshStandardMaterial({ color: 0xb7c0c8, metalness: .83, roughness: .42, envMapIntensity: .55 });
   metal.name = 'Bugatti cabin / brushed aluminum';
   const dark = new THREE.MeshStandardMaterial({ color: 0x161c23, metalness: .25, roughness: .45, emissive: 0x101721, emissiveIntensity: .14 });
@@ -44,15 +50,15 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
       metalness: materials.carbon.metalness, roughness: .46, side: materials.carbon.side, envMapIntensity: .62 })
     : materials.carbon.clone();
   carbon.name = 'Bugatti cabin / resin coated carbon trim';
-  const piping = new THREE.MeshStandardMaterial({ color: 0x8d3a41, roughness: .76 });
-  piping.name = 'Bugatti cabin / burgundy seam piping';
+  const piping = new THREE.MeshStandardMaterial({ color: 0x9c4b16, roughness: .76 });
+  piping.name = 'Bugatti cabin / subtle orange seam piping';
   const lit = new THREE.MeshBasicMaterial({ color: 0x617383, toneMapped: false });
   lit.name = 'Bugatti cabin / softly illuminated switch legends';
   const labels = new THREE.MeshStandardMaterial({ map: detailAtlas, alphaTest: .4, roughness: .44, metalness: .32, emissive: 0x2a3035, emissiveIntensity: .15 });
   labels.name = 'Bugatti cabin / engraved badges and controls';
   const dialMaterial = new THREE.MeshBasicMaterial({ map: instruments.map, alphaTest: .35, toneMapped: false });
   dialMaterial.name = 'Bugatti cabin / live analog instruments';
-  for (const material of [leather, quilting, metal, dark, carbon, piping, lit, labels, dialMaterial, materials.cyan]) {
+  for (const material of [leather, orangeLeather, quilting, metal, dark, carbon, piping, lit, labels, dialMaterial, materials.cyan]) {
     material.userData.cockpitDetail = true; material.userData.noCastShadow = true;
   }
   const cabin = new THREE.Group(); cabin.name = 'Bugatti / sculpted leather and aluminum cabin'; body.add(cabin);
@@ -318,7 +324,7 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
   const knob = add(frontCabin, 'leather and aluminum selector knob', new THREE.SphereGeometry(1, 12, 8), leather, [0, .760, -.075]); knob.scale.set(.025, .035, .024);
   box(frontCabin, [.009, .028, .008], [0, .766, -.051], metal);
   const gearLegend = detail(frontCabin, 'gear position engraving', [.092, .028], [0, .658, -.171], [512, 352, 512, 68]); gearLegend.rotation.x = -Math.PI / 2;
-  soft(frontCabin, 'leather center armrest', [.185, .075, .315], [0, .638, .237], leather, .025);
+  soft(frontCabin, 'orange leather center armrest', [.185, .075, .315], [0, .638, .237], orangeLeather, .025);
   box(frontCabin, [.0016, .0016, .259], [0, .677, .238], piping);
 
   // Contoured diamond-quilted seats, bolsters and integrated headrests.
@@ -337,7 +343,7 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
       soft(back, 'seat back side bolster', [.055, .338, .072], [edge * .14, 0, -.043], leather, .022);
       box(back, [.002, .305, .002], [edge * .108, .018, -.068], piping);
     }
-    soft(back, 'integrated leather headrest', [.216, .129, .073], [0, .257, -.005], leather, .024);
+    soft(back, 'integrated orange leather headrest', [.216, .129, .073], [0, .257, -.005], orangeLeather, .024);
     const crest = detail(back, 'headrest EB crest', [.042, .042], [0, .255, -.043], [0, 0, 256, 256]); crest.rotation.y = Math.PI;
     box(seat, [.034, .049, .038], [-side * .190, .481, .261], dark);
     box(seat, [.020, .009, .025], [-side * .190, .508, .261], piping);
@@ -350,10 +356,10 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
     doorTrim.name = 'Bugatti cabin / passenger door trim';
     cabin.add(doorTrim);
     soft(doorTrim, 'leather door card', [.039, .296, .882], [side * .675, .703, .006], leather, .015);
-    soft(doorTrim, 'carbon door insert', [.012, .117, .414], [side * .651, .763, -.095], carbon, .004);
-    soft(doorTrim, 'padded door armrest', [.081, .053, .351], [side * .627, .670, .067], leather, .019);
+    soft(doorTrim, 'orange leather door insert', [.012, .117, .414], [side * .651, .763, -.095], orangeLeather, .004);
+    soft(doorTrim, 'orange padded door armrest', [.081, .053, .351], [side * .627, .670, .067], orangeLeather, .019);
     tube(doorTrim, 'curved aluminum door pull', [[side * .636, .802, -.203], [side * .622, .791, -.128], [side * .614, .697, .015], [side * .622, .654, .070]], .010, metal, 12, 4);
-    tube(doorTrim, 'door stitching and ambient piping', [[side * .644, .835, -.385], [side * .644, .835, -.16], [side * .642, .813, .19], [side * .642, .735, .348]], .0018, materials.cyan, 10, 3);
+    tube(doorTrim, 'door stitching and ambient piping', [[side * .644, .835, -.385], [side * .644, .835, -.16], [side * .642, .813, .19], [side * .642, .735, .348]], .0018, piping, 10, 3);
     const handle = ring(doorTrim, 'oval metal door release', .024, .004, [side * .636, .772, -.279], metal, 16); handle.rotation.y = -side * Math.PI / 2; handle.scale.x = 1.45;
     for (let i = 0; i < 2; i++) box(doorTrim, [.029, .006, .014], [side * .612, .699, -.030 + i * .025], dark);
     box(doorTrim, [.035, .045, .366], [side * .661, .560, .164], dark);
@@ -407,7 +413,7 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
   batchArchitecture(steeringWheel, true);
   column.userData.dynamic = true; steeringWheel.userData.dynamic = true;
   steeringWheel.traverse(object => { object.userData.dynamic = true; object.userData.cockpitDetail = true; });
-  body.userData.interior = 'Bugatti inspired sculpted leather cabin / analog instruments';
+  body.userData.interior = 'Bugatti inspired orange and black leather cabin / analog instruments';
   let timer = 0;
   return {
     // Sit over the cushion with room to see the wheel and center controls;
