@@ -81,6 +81,10 @@ function routeProjection(route: Route, position: THREE.Vector3) {
   return progress;
 }
 
+// Traffic keeps ordinary reflective glass rather than sampling the player's live cameras.
+const trafficMirrorGlass = new THREE.MeshStandardMaterial({ color: 0x7e929e, metalness: 1, roughness: .09, side: THREE.DoubleSide, envMapIntensity: .85 });
+trafficMirrorGlass.name = 'Traffic / static reflective side mirror glass';
+
 /** Clone the player's assembled model, sharing its GPU geometry and textures. */
 function trafficRig(source: CarRig, color: number): TrafficCar['rig'] {
   const car = source.car.clone(true);
@@ -98,6 +102,10 @@ function trafficRig(source: CarRig, color: number): TrafficCar['rig'] {
   const removed: THREE.Object3D[] = [];
   car.traverse(object => {
     object.userData.dynamic = true;
+    if (object instanceof THREE.Mesh && object.userData.sideMirror) {
+      object.userData.cockpitDetail = false;
+      object.material = trafficMirrorGlass;
+    }
     if (object instanceof THREE.Light || object.userData.cockpitDetail) removed.push(object);
     if (!(object instanceof THREE.Mesh)) return;
     function materialCopy(material: THREE.Material) {

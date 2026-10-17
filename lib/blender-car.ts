@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import model from './blender-car-model.json';
+import { splitSideMirrorSurface } from './driving-mirrors';
 
 type CarMaterials = Record<'paint' | 'secondaryPaint' | 'carbon' | 'alloy' | 'glass' | 'amber' | 'trim' | 'redAccent' | 'white' | 'red', THREE.Material>;
 
 /** Blender authored panels, with baked bevel normals and shared game materials. */
 export function addBlenderCarBody(body: THREE.Group, materials: CarMaterials) {
   const headlights: THREE.Mesh[] = [], brakeLights: THREE.Mesh[] = [];
+  const sideMirrors: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[] = [];
   const textures = new THREE.TextureLoader();
   const materialMap: Record<string, THREE.Material> = { ...materials };
   // Dark intake/grille surrounds match the reference's black front fascia;
@@ -57,6 +59,10 @@ export function addBlenderCarBody(body: THREE.Group, materials: CarMaterials) {
     geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(bytes(panel.index)), 1));
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
+    if (panel.material === 'alloy' && (panel.part === 'driverDoor' || panel.part === 'passengerDoor')) {
+      const mirror = splitSideMirrorSurface(geometry, panel.part === 'driverDoor' ? -1 : 1);
+      if (mirror) { body.add(mirror); sideMirrors.push(mirror); }
+    }
     const material = panel.material === 'alloy' && /Door|doorSurround/.test(panel.name)
       ? cabinTrim : materialMap[panel.material];
     const mesh = new THREE.Mesh(geometry, material);
@@ -92,5 +98,5 @@ export function addBlenderCarBody(body: THREE.Group, materials: CarMaterials) {
   }
   body.userData.bodyModel = 'Blender / Bugatti Chiron';
   body.userData.driverDoorHinge = model.driverDoorHinge;
-  return { headlights, brakeLights };
+  return { headlights, brakeLights, sideMirrors };
 }

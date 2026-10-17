@@ -364,11 +364,24 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
     for (let i = 0; i < 2; i++) box(doorTrim, [.029, .006, .014], [side * .612, .699, -.030 + i * .025], dark);
     box(doorTrim, [.035, .045, .366], [side * .661, .560, .164], dark);
   }
-  // A dropped footwell lets the driver's shins fall naturally below the cushion.
-  box(cabin, [1.19, .031, .79], [0, .422, .355], dark);
+  // A closed cabin tub joins the dash, door sills and seat platform. The old
+  // narrow floor stopped short of the door lining and left the road visible
+  // beside the seats and beyond the pedals. Overlap the solid returns so the
+  // dropped footwell remains sealed even while the body pitches over the road.
   const carpet = new THREE.MeshStandardMaterial({ name: 'Bugatti / charcoal footwell carpet', color: 0x101214, roughness: .98 });
-  box(cabin, [1.19, .031, .72], [0, .245, -.40], carpet);
-  box(cabin, [1.19, .178, .025], [0, .334, -.027], dark);
+  carpet.userData.cockpitDetail = true; carpet.userData.noCastShadow = true;
+  add(cabin, 'continuous sealed carpet floor pan', new THREE.BoxGeometry(1.44, .042, 1.92), carpet, [0, .242, -.16]);
+  add(cabin, 'raised seat platform', new THREE.BoxGeometry(1.44, .031, .85), dark, [0, .422, .375]);
+  add(cabin, 'closed footwell step riser', new THREE.BoxGeometry(1.44, .194, .036), dark, [0, .340, -.030]);
+  add(cabin, 'front footwell firewall', new THREE.BoxGeometry(1.44, .597, .040), carpet, [0, .5415, -1.103]);
+  add(cabin, 'lower rear cabin bulkhead', new THREE.BoxGeometry(1.44, .55, .042), dark, [0, .515, .781]);
+  for (const side of [-1, 1]) {
+    add(cabin, 'closed lower sill return', new THREE.BoxGeometry(.050, .260, 1.91), dark, [side * .695, .370, -.160]);
+    add(cabin, 'front footwell kick panel', new THREE.BoxGeometry(.050, .590, .350), carpet, [side * .695, .540, -.940]);
+    // Keep the threshold below the door lining so the authored driver door
+    // still opens above the fixed sill instead of carrying a duplicate card.
+    soft(cabin, 'leather door sill threshold', [.140, .032, 1.60], [side * .680, .489, -.110], leather, .009);
+  }
   for (const side of [-1, 1]) {
     soft(cabin, 'fitted carpet footwell mat', [.40, .008, .59], [side * .32, .265, -.41], carpet, .012);
     box(cabin, [.005, .003, .54], [side * .32 - .19, .271, -.41], piping);

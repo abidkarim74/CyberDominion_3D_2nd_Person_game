@@ -195,7 +195,7 @@ export function makeCar() {
 
   const trim = new THREE.MeshStandardMaterial({ color: 0x11191f, metalness: .25, roughness: .55 });
   trim.name = 'Car / recessed satin trim';
-  const { headlights, brakeLights } = addBlenderCarBody(body, { paint, secondaryPaint, carbon, alloy, amber, glass, trim, redAccent, white, red: brakeMat });
+  const { headlights, brakeLights, sideMirrors } = addBlenderCarBody(body, { paint, secondaryPaint, carbon, alloy, amber, glass, trim, redAccent, white, red: brakeMat });
   addBugattiRearAero(body, { carbon, paint, trim, alloy });
   addReferenceLivery(body);
   addCarExteriorDetails(body, { carbon, paint, trim, alloy });
@@ -369,7 +369,7 @@ export function makeCar() {
   car.position.y = .015;
 
   return {
-    car, body, cockpit, driverDoor, wheels, steering, flames, brakeLights, exhausts,
+    car, body, cockpit, driverDoor, sideMirrors, wheels, steering, flames, brakeLights, exhausts,
     headlights, underglow, boostLights, nitroEffects, miniguns, gunBarrels,
     muzzleFlashes, brakeDiscs, reverseLights, headlightBeams
   };

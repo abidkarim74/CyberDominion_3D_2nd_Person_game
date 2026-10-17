@@ -17,6 +17,7 @@ import { addSteam } from './driving-atmosphere';
 import { makePresentationPass } from './presentation-pass';
 import { addInfrastructure, type CoveredRoad } from './city-infrastructure';
 import { makeCar } from './cinematic-car';
+import { createDrivingMirrors } from './driving-mirrors';
 import { AiTraffic, type TrafficMarker } from './ai-traffic';
 import { AiPedestrians } from './ai-pedestrians';
 import { BULLET_SPEED, SHOT_IMPULSE, MINIGUN_SPIN, type GunShot } from './front-miniguns';
@@ -322,6 +323,7 @@ export class NeonCityGame {
   private readonly environment: THREE.WebGLRenderTarget;
   private readonly island: ReturnType<typeof addIslandEnvironment>;
   private readonly reflections: ReturnType<typeof wetStreetReflection>;
+  private readonly drivingMirrors: ReturnType<typeof createDrivingMirrors>;
   private citySquare!: ReturnType<typeof addCitySquare>;
   private collisionWorld!: ColliderGrid;
   private cameraCollisionWorld!: ColliderGrid;
@@ -563,6 +565,7 @@ export class NeonCityGame {
     this.person = new PersonController(this.scene, this.cameraCollisionWorld, (x, z) => this.roadSnow.sample(x, z).height,
       this.carRig.body, this.carRig.cockpit.steeringWheel, this.carRig.driverDoor);
     this.person.resetDriving(this.carPosition, this.yaw);
+    this.drivingMirrors = createDrivingMirrors(this.carRig.sideMirrors, [this.car, this.person.root, this.reflections.mirror]);
     this.pedestrians = new AiPedestrians(this.scene, cameraSolids, (x, z) => this.roadSnow.sample(x, z).height);
     this.pedestrians.update(0, this.carPosition, this.graphicsQuality);
     this.updateWheelContacts();
@@ -1183,6 +1186,7 @@ export class NeonCityGame {
     this.camera.up.copy(this.cameraUp);
     if (snap) {
       this.reflections.invalidate();
+      this.drivingMirrors?.invalidate();
       this.shadowPosition.set(Infinity, Infinity, Infinity); this.shadowFrame = 0;
     }
     // Follow the same interpolated pose as the car, including on frames with
@@ -1390,6 +1394,7 @@ export class NeonCityGame {
     this.bloomPass.setSize(width * this.scenePixelRatio, height * this.scenePixelRatio);
     this.reflections.setPreset(this.graphicsQuality, this.qualityLevel);
     this.reflections.invalidate();
+    this.drivingMirrors.setPreset(this.graphicsQuality, this.qualityLevel);
     // Retain shadows at every tier; reduce their capture size and refresh rate.
     this.renderer.shadowMap.enabled = true;
     const shadowSize = Math.max(256, Math.round(profile.shadowSize / (1 + this.qualityLevel * .3)));
@@ -1866,6 +1871,8 @@ export class NeonCityGame {
     this.renderer.shadowMap.needsUpdate = this.renderer.shadowMap.enabled && this.shadowFrame++ % shadowInterval === 0 && shadowChanged;
     if (this.renderer.shadowMap.needsUpdate) { this.shadowPosition.copy(focus); this.shadowYaw = this.yaw; }
     this.renderer.info.reset();
+    this.drivingMirrors.update(this.renderer, this.scene, this.camera, this.elapsed,
+      this.cameraView === 'driver' && this.person.mode === 'driving');
     this.composer.render();
     this.telemetryTimer += delta;
     if (this.active && this.telemetryTimer > 0.085) {
@@ -1917,6 +1924,7 @@ export class NeonCityGame {
     this.island.dispose();
     this.keyLight.shadow.map?.dispose();
     this.reflections.dispose();
+    this.drivingMirrors.dispose();
     this.citySquare.dispose();
     for (const pass of this.composer.passes) pass.dispose();
     this.composer.dispose();
