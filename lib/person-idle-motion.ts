@@ -1,8 +1,6 @@
 import * as THREE from 'three';
 
-type Joint = 'Spine' | 'Spine1' | 'Spine2' | 'Neck' | 'Head'
-  | 'LeftShoulder' | 'RightShoulder' | 'LeftArm' | 'RightArm'
-  | 'LeftForeArm' | 'RightForeArm' | 'LeftHand' | 'RightHand';
+type Joint = 'Spine' | 'Spine1' | 'Spine2' | 'Neck' | 'Head';
 
 type MotionBone = {
   bone: THREE.Bone;
@@ -15,8 +13,6 @@ export type LocomotionMotion = { speed: number; acceleration: number; turnRate: 
 
 const JOINTS: readonly Joint[] = [
   'Spine', 'Spine1', 'Spine2', 'Neck', 'Head',
-  'LeftShoulder', 'RightShoulder', 'LeftArm', 'RightArm',
-  'LeftForeArm', 'RightForeArm', 'LeftHand', 'RightHand',
 ];
 const ease = (t: number) => t * t * (3 - 2 * t);
 
@@ -29,7 +25,7 @@ function gesture(time: number, period: number, start: number, rise: number, hold
   return 1 - ease((t - rise - hold) / fall);
 }
 
-/** Small human idle gestures layered over the model's existing animation. */
+/** Head glances, seated breathing, and torso support for travel and doorways. */
 export class PersonIdleMotion {
   private readonly bones: MotionBone[] = [];
   private readonly hierarchy: HierarchyNode[] = [];
@@ -91,8 +87,7 @@ export class PersonIdleMotion {
     this.wasStanding = standing;
     this.standingWeight += (Number(standing) - this.standingWeight)
       * (1 - Math.exp(-delta * (standing ? 3.8 : 12)));
-    // A doorway motion takes over immediately from standing gestures. Clearing
-    // the weight also prevents a fading hand adjustment returning on release.
+    // A doorway motion takes over immediately from the standing head glances.
     if (bend > 0 && !standing) this.standingWeight = 0;
     this.seatedWeight += (Number(seated) - this.seatedWeight)
       * (1 - Math.exp(-delta * (seated ? 3.5 : 12)));
@@ -115,18 +110,15 @@ export class PersonIdleMotion {
     if (stand + sit + bend + Math.abs(this.travelPitch) + Math.abs(this.travelRoll) < .0001) return;
 
     const t = this.time;
-    // Start a new idle sequence after each stop. A glance and a hand adjustment
-    // arrive within the first few seconds, then alternate with relaxed pauses.
+    // Start the head-glance sequence after each stop. Standing shoulders and
+    // arms stay in the relaxed pose instead of performing idle gestures.
     const gestureTime = standing || stand > .01 ? this.idleTime : t;
     const glance = .68 * gesture(gestureTime, 19.8, .8, 1.2, 1.4, 1.9)
       - .62 * gesture(gestureTime, 19.8, 7.4, 1.4, 1.2, 2.0)
       + .035 * Math.sin(t * .49 + .7);
     const lookDown = gesture(gestureTime, 23.7, 14.0, 1.0, .7, 1.5);
-    const leftAdjust = gesture(gestureTime, 17.4, 2.6, 1.1, .9, 1.8);
-    const rightAdjust = gesture(gestureTime, 21.2, 9.0, 1.3, .9, 1.9);
     const breath = Math.sin(t * Math.PI * 2 / 4.8)
       + .24 * Math.sin(t * Math.PI * 2 / 7.2 + 1.1);
-    const sway = .025 * Math.sin(t * .63) + .010 * Math.sin(t * .29 + 1.4);
     const headWeight = stand + sit * .44;
 
     this.model.updateWorldMatrix(true, false);
@@ -138,19 +130,16 @@ export class PersonIdleMotion {
       let pitch = 0, yaw = 0, roll = 0;
       switch (motion.joint) {
         case 'Spine':
-          pitch = stand * (.008 * breath + .006 * Math.sin(t * .23)) + bend * .23 + this.travelPitch * .42;
-          yaw = stand * .07 * glance;
-          roll = stand * sway * .40 + this.travelRoll * .42;
+          pitch = bend * .23 + this.travelPitch * .42;
+          roll = this.travelRoll * .42;
           break;
         case 'Spine1':
-          pitch = stand * .010 * breath + sit * .0015 * breath + bend * .24 + this.travelPitch * .33;
-          yaw = stand * .09 * glance;
-          roll = stand * sway * .32 + this.travelRoll * .33;
+          pitch = sit * .0015 * breath + bend * .24 + this.travelPitch * .33;
+          roll = this.travelRoll * .33;
           break;
         case 'Spine2':
-          pitch = stand * .012 * breath + sit * .0015 * breath + bend * .18 + this.travelPitch * .25;
-          yaw = stand * .13 * glance;
-          roll = stand * sway * .28 + this.travelRoll * .25;
+          pitch = sit * .0015 * breath + bend * .18 + this.travelPitch * .25;
+          roll = this.travelRoll * .25;
           break;
         case 'Neck':
           pitch = headWeight * (.035 * lookDown + .013 * Math.sin(t * .37 + 1.3)) + bend * .055 - this.travelPitch * .25;
@@ -161,40 +150,6 @@ export class PersonIdleMotion {
           pitch = headWeight * (.14 * lookDown + .022 * Math.sin(t * .37 + .8)) + bend * .075 - this.travelPitch * .35;
           yaw = headWeight * .69 * glance;
           roll = headWeight * .012 * Math.sin(t * .31 + 1.1) - this.travelRoll * .30;
-          break;
-        case 'LeftShoulder':
-          pitch = stand * (.015 * breath - .025 * leftAdjust);
-          roll = stand * .025 * leftAdjust;
-          break;
-        case 'RightShoulder':
-          pitch = stand * (.012 * breath - .028 * rightAdjust);
-          roll = -stand * .026 * rightAdjust;
-          break;
-        case 'LeftArm':
-          pitch = stand * (-.16 * leftAdjust + .018 * Math.sin(t * .63 + 1.7));
-          roll = stand * (.065 * leftAdjust + .012 * Math.sin(t * .47));
-          break;
-        case 'RightArm':
-          pitch = stand * (-.20 * rightAdjust + .016 * Math.sin(t * .59 + .4));
-          roll = -stand * (.070 * rightAdjust + .012 * Math.sin(t * .44 + .8));
-          break;
-        case 'LeftForeArm':
-          pitch = -stand * .75 * leftAdjust;
-          yaw = stand * .07 * leftAdjust;
-          break;
-        case 'RightForeArm':
-          pitch = -stand * .95 * rightAdjust;
-          yaw = -stand * .08 * rightAdjust;
-          break;
-        case 'LeftHand':
-          pitch = stand * (.14 * leftAdjust + .018 * Math.sin(t * .63 + 2.1));
-          yaw = stand * .13 * leftAdjust;
-          roll = stand * .070 * leftAdjust;
-          break;
-        case 'RightHand':
-          pitch = stand * (.17 * rightAdjust + .016 * Math.sin(t * .59 + .9));
-          yaw = -stand * .13 * rightAdjust;
-          roll = -stand * .080 * rightAdjust;
           break;
       }
       if (Math.abs(pitch) + Math.abs(yaw) + Math.abs(roll) < .000001) continue;

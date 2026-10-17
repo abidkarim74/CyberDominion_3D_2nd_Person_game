@@ -92,6 +92,46 @@ advance(90, ['a']); advance(90, ['d']); advance(120, []);
 assert.ok(report.transitions.some(t => t.from === 'Walk' && t.to === 'Run'));
 assert.ok(report.transitions.some(t => t.from === 'Run' && t.to === 'Walk'));
 assert.ok(report.maximumLean > .01, 'A running corner visibly transfers weight through the torso');
+
+// Exercise the complete controller on the shipped rig, including the mixer:
+// freezing just the procedural hand gestures would leave the clip's arm sway.
+const handBones = [], armBones = [];
+person.model.traverse(object => {
+  if (!object.isBone) return;
+  if (/(?:Left|Right)Hand$/.test(object.name)) handBones.push(object);
+  if (/(?:Left|Right)(?:Arm|ForeArm)$/.test(object.name)) armBones.push(object);
+});
+assert.equal(handBones.length, 2);
+const parkedCar = new THREE.Vector3(1000, 0, 1000), keys = new Set();
+const frame = () => person.update(1 / 60, keys, parkedCar, 0, 0, []);
+for (let i = 0; i < 180; i++) frame();
+const positions = handBones.map(bone => bone.getWorldPosition(new THREE.Vector3()));
+const rotations = handBones.map(bone => bone.getWorldQuaternion(new THREE.Quaternion()).normalize());
+report.standingHands = { seconds: 30, maximumPositionChange: 0, maximumRotationChange: 0 };
+for (let i = 0; i < 1800; i++) {
+  frame();
+  handBones.forEach((bone, index) => {
+    report.standingHands.maximumPositionChange = Math.max(report.standingHands.maximumPositionChange,
+      positions[index].distanceTo(bone.getWorldPosition(new THREE.Vector3())));
+    report.standingHands.maximumRotationChange = Math.max(report.standingHands.maximumRotationChange,
+      rotations[index].angleTo(bone.getWorldQuaternion(new THREE.Quaternion()).normalize()));
+  });
+}
+assert.ok(report.standingHands.maximumPositionChange < 1e-6 && report.standingHands.maximumRotationChange < 1e-6,
+  `Both hands remain still for thirty seconds after stopping: ${JSON.stringify(report.standingHands)}`);
+report.armSwing = {};
+for (const name of ['Walk', 'Run']) {
+  keys.add('w'); if (name === 'Run') keys.add('shift');
+  const before = armBones.map(bone => bone.quaternion.clone());
+  let maximumChange = 0;
+  for (let i = 0; i < 120; i++) {
+    frame();
+    armBones.forEach((bone, index) => { maximumChange = Math.max(maximumChange, before[index].angleTo(bone.quaternion)); });
+  }
+  assert.equal(person.activeAction.getClip().name, name);
+  assert.ok(maximumChange > .05, `${name}: arms continue to animate while moving`);
+  report.armSwing[name] = maximumChange;
+}
 person.idleMotion.restore(); person.idleMotion.update(1 / 60, false, true);
 assert.equal(person.idleMotion.travelRoll, 0, 'Entering a vehicle immediately clears cornering lean');
 assert.equal(person.idleMotion.travelPitch, 0, 'Entering a vehicle immediately clears acceleration lean');

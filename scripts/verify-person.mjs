@@ -135,7 +135,7 @@ try {
   });
   await advance(3.7);
   await render();
-  await page.screenshot({ path: 'artifacts/person-idle-hand-adjustment.png' });
+  await page.screenshot({ path: 'artifacts/person-idle-hands-resting.png' });
 
   console.log('Checking sustained natural idle motion on the actual rig');
   report.checks.idle = await page.evaluate(() => {
@@ -149,14 +149,23 @@ try {
     const tracked = ['Head', 'Spine2', 'LeftHand', 'RightHand', 'LeftForeArm', 'RightForeArm'].map(find);
     const feet = ['LeftFoot', 'RightFoot'].map(find);
     const origin = p.position.clone(), facing = p.yaw;
-    const quaternions = tracked.map(bone => bone.quaternion.clone());
+    const quaternions = tracked.map(bone => bone.quaternion.clone().normalize());
     const footPositions = feet.map(bone => bone.position.clone());
+    p.root.updateMatrixWorld(true);
+    const hands = tracked.slice(2, 4);
+    const handPositions = hands.map(bone => bone.getWorldPosition(origin.clone()));
+    const handRotations = hands.map(bone => bone.getWorldQuaternion(quaternions[0].clone()).normalize());
     const ranges = tracked.map(() => 0);
-    let footPoseChange = 0;
+    let footPoseChange = 0, handPositionDrift = 0, handRotationDrift = 0;
     for (let frame = 0; frame < 1800; frame++) {
       p.update(1 / 60, new Set(), g.carPosition, g.yaw, 0, []);
-      tracked.forEach((bone, i) => { ranges[i] = Math.max(ranges[i], quaternions[i].angleTo(bone.quaternion)); });
+      tracked.forEach((bone, i) => { ranges[i] = Math.max(ranges[i], quaternions[i].angleTo(bone.quaternion.clone().normalize())); });
       feet.forEach((bone, i) => { footPoseChange = Math.max(footPoseChange, footPositions[i].distanceTo(bone.position)); });
+      p.root.updateMatrixWorld(true);
+      hands.forEach((bone, i) => {
+        handPositionDrift = Math.max(handPositionDrift, handPositions[i].distanceTo(bone.getWorldPosition(origin.clone())));
+        handRotationDrift = Math.max(handRotationDrift, handRotations[i].angleTo(bone.getWorldQuaternion(quaternions[0].clone()).normalize()));
+      });
     }
     // Repeated paused frames must preserve the complete pose without accumulating offsets.
     const paused = tracked.map(bone => bone.quaternion.toArray());
@@ -173,12 +182,14 @@ try {
     });
     return { head: ranges[0], chest: ranges[1], leftHand: ranges[2], rightHand: ranges[3],
       leftElbow: ranges[4], rightElbow: ranges[5], legs,
-      footPoseChange, pausedDrift, rootDrift: origin.distanceTo(p.position), facingDrift: Math.abs(facing - p.yaw) };
+      footPoseChange, handPositionDrift, handRotationDrift, pausedDrift,
+      rootDrift: origin.distanceTo(p.position), facingDrift: Math.abs(facing - p.yaw) };
   });
   assert.ok(report.checks.idle.head > .35, 'Idle character makes clear head glances');
-  assert.ok(report.checks.idle.chest > .07, 'Idle torso follows the head turns');
-  assert.ok(report.checks.idle.leftHand > .15 && report.checks.idle.rightHand > .15, 'Both hands visibly adjust while idle');
-  assert.ok(report.checks.idle.leftElbow > .35 && report.checks.idle.rightElbow > .45, 'Idle changes the arm poses rather than holding the same silhouette');
+  for (const joint of ['chest', 'leftHand', 'rightHand', 'leftElbow', 'rightElbow'])
+    assert.ok(report.checks.idle[joint] < 1e-6, `${joint}: standing pose stays relaxed and still`);
+  assert.ok(report.checks.idle.handPositionDrift < 1e-6 && report.checks.idle.handRotationDrift < 1e-6,
+    'Neither hand moves in world space throughout thirty seconds of standing idle');
   for (const leg of report.checks.idle.legs) {
     assert.ok(leg.kneeBend < .22 && leg.thighLean < .22 && leg.shinLean < .22, 'Idle uses relaxed upright legs instead of the combat crouch');
   }

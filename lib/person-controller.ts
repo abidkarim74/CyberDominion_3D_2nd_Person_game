@@ -390,7 +390,10 @@ export class PersonController {
     const action = this.actions.get(name);
     if (!action || action === this.activeAction && !oneShot) return;
     const previous = this.activeAction;
-    action.reset().setEffectiveWeight(1).setEffectiveTimeScale(1);
+    // Hold the relaxed first idle pose. The clip's authored sway otherwise
+    // keeps moving the arms even after the standing gestures are removed.
+    // Mixer time still advances, so the stop crossfade settles normally.
+    action.reset().setEffectiveWeight(1).setEffectiveTimeScale(name === 'Idle' ? 0 : 1);
     // Preserve the same supporting leg when accelerating into a run. Captured
     // clips may begin at different points in a stride, so align their measured
     // left-foot contact phases rather than restarting both at frame zero.
