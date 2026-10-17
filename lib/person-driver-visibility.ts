@@ -42,7 +42,7 @@ export class PersonDriverVisibility {
     });
   }
 
-  /** Switch geometry only when the camera changes; the skeleton and textures stay shared. */
+  /** Reuse cached indices for the driver's eyes or the complete body in an optical reflection. */
   setDriverView(enabled: boolean) {
     if (enabled === this.diagnostics.driverView) return;
     this.diagnostics.driverView = enabled;

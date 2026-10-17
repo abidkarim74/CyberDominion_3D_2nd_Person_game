@@ -16,6 +16,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { addSteam } from './driving-atmosphere';
 import { makePresentationPass } from './presentation-pass';
 import { addInfrastructure, type CoveredRoad } from './city-infrastructure';
+import { addTunnelDetails, tunnelWallSections } from './tunnel-details';
 import { makeCar } from './cinematic-car';
 import { createDrivingMirrors } from './driving-mirrors';
 import { AiTraffic, type TrafficMarker } from './ai-traffic';
@@ -34,6 +35,9 @@ import { GRAPHICS_PRESETS, isGraphicsQuality, loadGraphicsPreference, recommendG
 export type CameraView = 'chase' | 'driver' | 'orbit' | 'person';
 
 const VEHICLE_FIXED_STEP = 1 / 120;
+const CENTRAL_TUNNEL_LENGTH = 26 * 4;
+const CENTRAL_TUNNEL_ENTRANCE_Z = 75;
+const CENTRAL_TUNNEL_CENTER_Z = CENTRAL_TUNNEL_ENTRANCE_Z + CENTRAL_TUNNEL_LENGTH / 2;
 
 export type DriveTelemetry = {
   speed: number;
@@ -136,44 +140,44 @@ function makeRoadTexture() {
 
 function addTunnel(scene: THREE.Scene, colliders: BuildingCollider[]) {
   const structure = new THREE.Group();
+  structure.name = 'Central / extended neon transit tunnel';
+  structure.position.set(-22, 0, CENTRAL_TUNNEL_CENTER_Z);
+  const length = CENTRAL_TUNNEL_LENGTH, half = length / 2;
+  const crossings = ROAD_COORDS.map(z => z - CENTRAL_TUNNEL_CENTER_Z).filter(z => Math.abs(z) < half + 9.8);
+  const sections = tunnelWallSections(half, crossings, 9.8);
+  Object.assign(structure.userData, { tunnel: true, tunnelLength: length, crossings });
   const concrete = new THREE.MeshStandardMaterial({ color: 0x101625, metalness: 0.74, roughness: 0.38 });
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(19.4, 1.7, 26), concrete);
-  roof.position.set(0, 10.2, 66);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(19.4, 1.7, length), concrete);
+  roof.position.set(0, 10.2, 0);
   structure.add(roof);
   const innerRoof = new THREE.Mesh(
-    new THREE.BoxGeometry(18.2, 0.18, 25),
+    new THREE.BoxGeometry(18.2, 0.18, length - 1),
     new THREE.MeshStandardMaterial({ color: 0x080e1b, metalness: 0.72, roughness: 0.32, emissive: 0x102c3b }),
   );
-  innerRoof.position.set(0, 9.28, 66);
+  innerRoof.position.set(0, 9.28, 0);
   structure.add(innerRoof);
   for (const side of [-1, 1]) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.9, 9.6, 26), concrete);
-    wall.position.set(side * 9.35, 4.8, 66);
-    structure.add(wall);
-    const guide = new THREE.Mesh(
-      new THREE.BoxGeometry(0.1, 0.1, 25),
-      new THREE.MeshBasicMaterial({ color: side < 0 ? 0x20dbea : 0xf5409d, toneMapped: false }),
-    );
-    guide.position.set(side * 8.83, 8.8, 66);
-    structure.add(guide);
+    const guideMaterial = new THREE.MeshBasicMaterial({ color: new THREE.Color(side < 0 ? 0x20dbea : 0xf5409d).multiplyScalar(1.65), toneMapped: false });
+    for (const [from, to] of sections) {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(.9, 9.6, to - from), concrete);
+      wall.position.set(side * 9.35, 4.8, (from + to) / 2); structure.add(wall);
+      const guide = new THREE.Mesh(new THREE.BoxGeometry(.10, .10, to - from), guideMaterial);
+      guide.position.set(side * 8.83, 8.8, (from + to) / 2); structure.add(guide);
+      colliders.push({ x: -22 + side * 9.35, z: CENTRAL_TUNNEL_CENTER_Z + (from + to) / 2,
+        hx: .55, hz: (to - from) / 2, label: 'Central tunnel side wall' });
+    }
   }
-  for (let i = 0; i < 9; i += 1) {
-    const z = 54 + i * 3;
+  for (let z = -half + 1; z < half; z += 3.125) {
+    if (crossings.some(crossing => Math.abs(z - crossing) < 10.2)) continue;
     const rib = new THREE.Mesh(
       new THREE.TorusGeometry(8.9, 0.16, 6, 24, Math.PI),
       new THREE.MeshStandardMaterial({ color: 0x25394c, metalness: 0.9, roughness: 0.24 }),
     );
     rib.rotation.x = 0;
-    rib.position.set(0, 0.5, z);
+    rib.position.set(0, .5, z);
     structure.add(rib);
-    const lamp = new THREE.Mesh(
-      new THREE.BoxGeometry(1.3, 0.08, 0.15),
-      new THREE.MeshBasicMaterial({ color: i % 3 === 0 ? 0xff4b9d : 0x41e6fa, toneMapped: false }),
-    );
-    lamp.position.set(0, 9.1, z);
-    structure.add(lamp);
   }
-  for (const z of [53, 79]) {
+  for (const z of [-half, half]) {
     const portal = new THREE.Mesh(
       new THREE.BoxGeometry(18.6, 0.28, 0.25),
       new THREE.MeshBasicMaterial({ color: 0x45eaff, toneMapped: false }),
@@ -181,18 +185,15 @@ function addTunnel(scene: THREE.Scene, colliders: BuildingCollider[]) {
     portal.position.set(0, 9.24, z);
     structure.add(portal);
   }
-  const tealLamp = new THREE.PointLight(0x41dfff, 28, 19, 2);
-  tealLamp.position.set(0, 6.5, 57);
+  const tealLamp = new THREE.PointLight(0x41dfff, 65, 44, 2);
+  tealLamp.position.set(0, 6.5, -half * .55);
   structure.add(tealLamp);
-  const pinkLamp = new THREE.PointLight(0xf437a7, 26, 19, 2);
-  pinkLamp.position.set(0, 6.5, 75);
+  const pinkLamp = new THREE.PointLight(0x9b79ff, 58, 44, 2);
+  pinkLamp.position.set(0, 6.5, half * .55);
   structure.add(pinkLamp);
-  structure.position.set(-22, 0, 22);
+  addTunnelDetails(structure, { length, halfWidth: 8.9, ceiling: 9.19, crossings,
+    crossingHalfWidth: 9.8, label: 'CENTRAL / NEON TRANSIT', profile: 'flat' });
   scene.add(structure);
-  colliders.push(
-    { x: -31.4, z: 88, hx: 0.7, hz: 13 },
-    { x: -12.6, z: 88, hx: 0.7, hz: 13 },
-  );
 }
 
 function addSkyBridge(scene: THREE.Scene, z: number, color: number) {
@@ -358,7 +359,8 @@ export class NeonCityGame {
   private readonly cameraAnchor = this.carPosition.clone();
   private readonly cameraTravel = new THREE.Vector3();
   private readonly colliders: BuildingCollider[] = [];
-  private readonly coveredRoads: CoveredRoad[] = [{ x: -22, z: 88, hx: 9.5, hz: 13, ceiling: 11, label: 'CENTRAL TUNNEL' }];
+  private readonly coveredRoads: CoveredRoad[] = [{ x: -22, z: CENTRAL_TUNNEL_CENTER_Z, hx: 9.5,
+    hz: CENTRAL_TUNNEL_LENGTH / 2, ceiling: 11, label: 'CENTRAL TUNNEL' }];
   private readonly neonSigns: THREE.Mesh[] = [];
   private keyLight!: THREE.DirectionalLight;
   private shadowFrame = 0;
@@ -565,7 +567,10 @@ export class NeonCityGame {
     this.person = new PersonController(this.scene, this.cameraCollisionWorld, (x, z) => this.roadSnow.sample(x, z).height,
       this.carRig.body, this.carRig.cockpit.steeringWheel, this.carRig.driverDoor);
     this.person.resetDriving(this.carPosition, this.yaw);
-    this.drivingMirrors = createDrivingMirrors(this.carRig.sideMirrors, [this.car, this.person.root, this.reflections.mirror]);
+    this.drivingMirrors = createDrivingMirrors(this.carRig.sideMirrors, [this.car, this.person.root, this.reflections.mirror],
+      { surface: this.carRig.cockpit.rearviewMirror, anchor: this.carRig.body, occupant: this.person.root,
+        beforeCapture: () => this.person.setDriverView(false),
+        afterCapture: () => this.person.setDriverView(this.cameraView === 'driver' && this.person.mode === 'driving') });
     this.pedestrians = new AiPedestrians(this.scene, cameraSolids, (x, z) => this.roadSnow.sample(x, z).height);
     this.pedestrians.update(0, this.carPosition, this.graphicsQuality);
     this.updateWheelContacts();
@@ -1292,7 +1297,9 @@ export class NeonCityGame {
     this.steerInput = 0;
     this.boostCharge = 100;
     this.cancelNitro();
+    this.carRig.cockpit.steering.reset();
     this.carRig.cockpit.steeringWheel.rotation.z = 0;
+    this.carRig.cockpit.ambience.reset();
     this.updateCamera(0, true);
     this.resetWeapons();
     for (const flash of this.muzzleFlashes) flash.visible = false;
@@ -1527,9 +1534,14 @@ export class NeonCityGame {
     const c = this.wheelContacts;
     const groundPitch = Math.atan2((c[0].height + c[2].height - c[1].height - c[3].height) / 2, 2.86);
     const groundRoll = Math.atan2((c[2].height + c[3].height - c[0].height - c[1].height) / 2, 1.79);
-    const targetPitch = THREE.MathUtils.clamp(groundPitch + this.vehicleMotion.acceleration / 9.81 * .038, -.2, .2);
+    // Keep the sprung body's dive and roll within this low car's travel. Their
+    // combined extremes must leave the front tyres below the visible hood line,
+    // including modest wheel compression; terrain inclination stays independent.
+    const dynamicPitch = THREE.MathUtils.clamp(this.vehicleMotion.acceleration / 9.81 * .038, -.025, .025);
+    const dynamicRoll = THREE.MathUtils.clamp(-this.vehicleMotion.yawRate * this.velocity.length() / 9.81 * .055, -.035, .035);
+    const targetPitch = THREE.MathUtils.clamp(groundPitch + dynamicPitch, -.2, .2);
     this.carRig.body.rotation.x = THREE.MathUtils.lerp(this.carRig.body.rotation.x, targetPitch, suspensionEase);
-    const targetRoll = THREE.MathUtils.clamp(groundRoll - this.vehicleMotion.yawRate * this.velocity.length() / 9.81 * .055, -.2, .2);
+    const targetRoll = THREE.MathUtils.clamp(groundRoll + dynamicRoll, -.2, .2);
     this.carRig.body.rotation.z = THREE.MathUtils.lerp(this.carRig.body.rotation.z, targetRoll, suspensionEase);
 
     // Road feedback fades out before stopping; only actual weapon recoil moves
@@ -1819,6 +1831,7 @@ export class NeonCityGame {
     // The driver's grip uses the wheel's current transform, including steering.
     this.carRig.cockpit.update(delta, this.lastTelemetry, this.steerInput, this.cameraView === 'driver');
     this.person.update(this.active ? delta : 0, this.pressed, this.carPosition, this.yaw, this.velocity.length(), this.personBlockers);
+    this.carRig.cockpit.ambience.update(delta, this.person.mode === 'driving', this.active);
     this.carRig.driverDoor.rotation.y = -.96 * this.person.doorOpenAmount;
     this.person.root.visible = this.person.ready;
     this.person.setDriverView(this.cameraView === 'driver' && this.person.mode === 'driving');

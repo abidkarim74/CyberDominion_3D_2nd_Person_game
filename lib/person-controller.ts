@@ -4,6 +4,7 @@ import { CAR_HALF_LENGTH, CAR_HALF_WIDTH, type ColliderGrid, type WorldCollider 
 import { CITY_EDGE } from './city-layout';
 import { PersonIdleMotion } from './person-idle-motion';
 import { PersonSeatMotion, type FootContacts } from './person-seat-motion';
+import { PersonGroundMotion } from './person-ground-motion';
 import { PersonSteeringMotion, type HandContacts } from './person-steering-motion';
 import { PersonDriverVisibility } from './person-driver-visibility';
 import { PERSON_WORLD_SCALE } from './person-scale';
@@ -86,6 +87,8 @@ export class PersonController {
   private mixer?: THREE.AnimationMixer;
   private idleMotion?: PersonIdleMotion;
   private seatMotion?: PersonSeatMotion;
+  private groundMotion?: PersonGroundMotion;
+  private runGroundOffset = 0;
   private steeringMotion?: PersonSteeringMotion;
   private driverVisibility?: PersonDriverVisibility;
   private driverView = false;
@@ -204,11 +207,16 @@ export class PersonController {
       this.root.updateWorldMatrix(true, false);
       this.model.updateMatrixWorld(true);
       this.diagnosticState.height = new THREE.Box3().setFromObject(this.model, true).getSize(new THREE.Vector3()).y;
+      // Boot skinning changes between standing and seated poses. Calibrate the
+      // road sole in its planted pose, rather than carrying seated skin offsets
+      // into a standing ankle target that would buckle both knees.
+      this.calibrateSoles();
+      this.groundMotion = new PersonGroundMotion(this.model);
+      this.calibrateRunGrounding();
       this.play('Seated', 0);
       this.mixer.update(0);
       this.idleMotion = new PersonIdleMotion(this.model);
       this.seatMotion = new PersonSeatMotion(this.model);
-      this.calibrateSoles();
       if (this.steeringWheel) this.steeringMotion = new PersonSteeringMotion(this.model, this.steeringWheel);
       this.driverVisibility = new PersonDriverVisibility(this.model);
       this.driverVisibility.setDriverView(this.driverView);
@@ -229,6 +237,7 @@ export class PersonController {
   get diagnostics() {
     return { ...this.diagnosticState, mode: this.mode, ready: this.ready, speed: this.speed,
       steering: this.steeringMotion?.diagnostics,
+      grounding: this.groundMotion?.diagnostics,
       driverVisibility: this.driverVisibility?.diagnostics,
       transitionProgress: this.transition ? this.transition.elapsed / this.transition.duration : 0,
       transitionSeconds: this.transition?.duration ?? TRANSITION_SECONDS,
@@ -249,6 +258,7 @@ export class PersonController {
     this.steeringMotion?.restore();
     this.idleMotion?.restore();
     this.seatMotion?.restore();
+    this.groundMotion?.restore();
     this.rememberCar(carPosition, carYaw, carSpeed);
     this.blockers = blockers;
     if (this.mode === 'driving') {
@@ -272,6 +282,10 @@ export class PersonController {
     this.idleMotion?.update(dt, this.mode === 'walking' && this.speed < .10,
       this.mode === 'driving', this.transferDuck);
     this.updateContacts();
+    if (this.mode === 'walking') {
+      const run = this.actions.get('Run');
+      this.groundMotion?.update(this.ankleFloor, this.runGroundOffset * (run?.enabled ? run.getEffectiveWeight() : 0));
+    }
     this.seatMotion?.update(this.ankleFloor, 1, this.footContacts);
     const progress = this.transition ? this.transition.elapsed / this.transition.duration : 0;
     const grip = this.mode === 'driving' ? 1
@@ -309,6 +323,7 @@ export class PersonController {
     this.steeringMotion?.restore();
     this.idleMotion?.restore();
     this.seatMotion?.restore();
+    this.groundMotion?.restore();
     this.rememberCar(carPosition, carYaw, 0);
     this.mode = 'driving';
     this.transition = undefined;
@@ -329,6 +344,7 @@ export class PersonController {
     this.steeringMotion?.restore();
     this.idleMotion?.restore();
     this.seatMotion?.restore();
+    this.groundMotion?.restore();
     this.mixer?.stopAllAction();
     this.driverVisibility?.dispose();
     if (this.model) {
@@ -532,7 +548,28 @@ export class PersonController {
     }
   }
 
-  /** Cache the boot silhouette once; runtime grounding checks only a few points. */
+  /** Preserve the authored flight arc while bringing its lowest stance onto the road. */
+  private calibrateRunGrounding() {
+    if (!this.model || !this.mixer) return;
+    this.play('Run', 0);
+    const action = this.actions.get('Run');
+    if (!action) return;
+    const originY = this.model.getWorldPosition(this.from).y;
+    let minimum = Infinity;
+    for (let sample = 0; sample < 48; sample++) {
+      action.time = action.getClip().duration * sample / 48;
+      this.mixer.update(0); this.model.updateWorldMatrix(true, true);
+      for (const [side, rest] of this.footRest) {
+        rest.bone.getWorldPosition(this.soleAxis);
+        const height = this.soleAxis.y - originY;
+        rest.bone.getWorldQuaternion(this.soleRotation);
+        minimum = Math.min(minimum, height - this.soleClearance(side, this.soleRotation));
+      }
+    }
+    this.runGroundOffset = Number.isFinite(minimum) ? -Math.max(0, minimum) : 0;
+  }
+
+  /** Cache the planted boot silhouette once; runtime checks only a few points. */
   private calibrateSoles() {
     if (!this.model) return;
     this.model.updateWorldMatrix(true, true);

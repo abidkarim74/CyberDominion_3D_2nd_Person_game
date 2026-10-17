@@ -983,6 +983,14 @@ button {
   .graphics-settings { inset: 66px 16px auto; width: auto; max-width: none; max-height: calc(100dvh - 82px); padding: 19px; }
   .graphics-header h2 { font-size: 22px; }
 }
+/* Keep the panoramic rearview clear as the cockpit narrows. */
+@media (max-width: 1100px) {
+  .is-driving.is-driver-view .camera-toggle { top: auto; right: clamp(16px, 3vw, 32px); bottom: 76px; }
+  .is-driving.is-driver-view .car-inspect-toggle { bottom: 24px; }
+}
+@media (max-width: 680px) {
+  .is-driving.is-driver-view .camera-toggle > span { display: none; }
+}
 @media (max-height: 560px) {
   .graphics-settings { top: 16px; max-height: calc(100dvh - 32px); }
 }

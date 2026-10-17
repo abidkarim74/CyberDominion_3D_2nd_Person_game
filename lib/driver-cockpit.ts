@@ -2,6 +2,10 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { batchArchitecture } from './cinematic-city';
 import { makeBugattiInstruments, makeCabinDetailAtlas, makeCabinLeather, type CabinInstruments } from './bugatti-cabin-textures';
+import { addCabinAmbience } from './cabin-ambience';
+import { addCabinFinish } from './cabin-finish';
+import { CockpitSteering } from './cockpit-steering';
+import { addRearCabin } from './rear-cabin';
 
 type CabinMaterials = { carbon: THREE.Material; alloy: THREE.Material; cyan: THREE.Material };
 type Point = [number, number, number];
@@ -26,8 +30,8 @@ function upholsteredGeometry(size: Point, radius: number) {
 export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
   const leatherMap = makeCabinLeather(), quiltingMap = makeCabinLeather(true);
   const detailAtlas = makeCabinDetailAtlas(), instruments = makeBugattiInstruments();
-  const leather = new THREE.MeshStandardMaterial({ color: 0x25262a, map: leatherMap, bumpMap: leatherMap, bumpScale: .00055,
-    roughness: .83, metalness: .025, emissive: 0x141414, emissiveIntensity: .23, envMapIntensity: .6 });
+  const leather = new THREE.MeshStandardMaterial({ color: 0x484b50, map: leatherMap, bumpMap: leatherMap, bumpScale: .00055,
+    roughness: .77, metalness: .025, emissive: 0x171b23, emissiveIntensity: .29, envMapIntensity: .7 });
   leather.name = 'Bugatti cabin / fine grained black leather';
   // The reference uses orange hide framed by black bolsters. Reuse the grain
   // as a bump map so its gray albedo does not muddy the saturated upholstery.
@@ -47,9 +51,10 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
   const carbon = materials.carbon instanceof THREE.MeshStandardMaterial
     ? new THREE.MeshStandardMaterial({ color: materials.carbon.color, map: materials.carbon.map,
       bumpMap: materials.carbon.bumpMap, bumpScale: materials.carbon.bumpScale,
-      metalness: materials.carbon.metalness, roughness: .46, side: materials.carbon.side, envMapIntensity: .62 })
+      metalness: materials.carbon.metalness, roughness: .36, side: materials.carbon.side, envMapIntensity: .78 })
     : materials.carbon.clone();
   carbon.name = 'Bugatti cabin / resin coated carbon trim';
+  if (carbon instanceof THREE.MeshStandardMaterial) carbon.color.setHex(0x737d89);
   const piping = new THREE.MeshStandardMaterial({ color: 0x9c4b16, roughness: .76 });
   piping.name = 'Bugatti cabin / subtle orange seam piping';
   const lit = new THREE.MeshBasicMaterial({ color: 0x617383, toneMapped: false });
@@ -58,7 +63,9 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
   labels.name = 'Bugatti cabin / engraved badges and controls';
   const dialMaterial = new THREE.MeshBasicMaterial({ map: instruments.map, alphaTest: .35, toneMapped: false });
   dialMaterial.name = 'Bugatti cabin / live analog instruments';
-  for (const material of [leather, orangeLeather, quilting, metal, dark, carbon, piping, lit, labels, dialMaterial, materials.cyan]) {
+  const controlLabels = new THREE.MeshBasicMaterial({ map: detailAtlas, alphaTest: .4, toneMapped: false });
+  controlLabels.name = 'Bugatti cabin / backlit precision control displays';
+  for (const material of [leather, orangeLeather, quilting, metal, dark, carbon, piping, lit, labels, dialMaterial, controlLabels, materials.cyan]) {
     material.userData.cockpitDetail = true; material.userData.noCastShadow = true;
   }
   const cabin = new THREE.Group(); cabin.name = 'Bugatti / sculpted leather and aluminum cabin'; body.add(cabin);
@@ -119,11 +126,11 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
   function disc(parent: THREE.Object3D, name: string, radius: number, position: Point, material: THREE.Material = dark, segments = 20) {
     return add(parent, name, new THREE.CircleGeometry(radius, segments), material, position);
   }
-  function detail(parent: THREE.Object3D, name: string, size: [number, number], position: Point, region: [number, number, number, number]) {
+  function detail(parent: THREE.Object3D, name: string, size: [number, number], position: Point, region: [number, number, number, number], material: THREE.Material = labels) {
     const geometry = new THREE.PlaneGeometry(...size), uv = geometry.getAttribute('uv');
     const [x, y, width, height] = region;
     for (let i = 0; i < uv.count; i++) uv.setXY(i, (x + uv.getX(i) * width) / 1024, 1 - (y + (1 - uv.getY(i)) * height) / 512);
-    return add(parent, name, geometry, labels, position);
+    return add(parent, name, geometry, material, position);
   }
 
   // Continuous crowned dash rolls into the instrument hood and passenger cowl.
@@ -176,11 +183,49 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
     const a = row * (cowlColumns + 1) + column, b = a + cowlColumns + 1;
     cowlIndices.push(a, a + 1, b, a + 1, b + 1, b);
   }
+  // The upper skin alone leaves its ends and underside open to the wheel wells.
+  // Close the scuttle into a solid volume without raising its windshield edge.
+  const cowlTopCount = cowlPositions.length / 3;
+  for (let vertex = 0; vertex < cowlTopCount; vertex++) {
+    cowlPositions.push(cowlPositions[vertex * 3], .775, cowlPositions[vertex * 3 + 2]);
+    cowlUv.push(cowlUv[vertex * 2], cowlUv[vertex * 2 + 1]);
+  }
+  const cowlTopIndices = [...cowlIndices];
+  for (let triangle = 0; triangle < cowlTopIndices.length; triangle += 3) {
+    cowlIndices.push(cowlTopIndices[triangle + 2] + cowlTopCount,
+      cowlTopIndices[triangle + 1] + cowlTopCount, cowlTopIndices[triangle] + cowlTopCount);
+  }
+  function closeCowlEdge(a: number, b: number) {
+    cowlIndices.push(a, a + cowlTopCount, b, b, a + cowlTopCount, b + cowlTopCount);
+  }
+  for (let column = 0; column < cowlColumns; column++) {
+    closeCowlEdge(column, column + 1);
+    const front = cowlRows * (cowlColumns + 1);
+    closeCowlEdge(front + column + 1, front + column);
+  }
+  for (let row = 0; row < cowlRows; row++) {
+    const a = row * (cowlColumns + 1), b = a + cowlColumns + 1;
+    closeCowlEdge(b, a); closeCowlEdge(a + cowlColumns, b + cowlColumns);
+  }
   const cowlGeometry = new THREE.BufferGeometry();
   cowlGeometry.setAttribute('position', new THREE.Float32BufferAttribute(cowlPositions, 3));
   cowlGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(cowlUv, 2));
   cowlGeometry.setIndex(cowlIndices); cowlGeometry.computeVertexNormals();
   add(cabin, 'fitted windshield dashboard cowl', cowlGeometry, leather);
+  // Fitted end caps bridge the wider door aperture to the scuttle and pillar.
+  // These stay on the chassis ahead of the hinged door, sealing the view into
+  // the front wheel wells even as the suspension compresses or the tyres steer.
+  const cornerSection = [[.790, -1.16], [.850, -1.16], [.927, -1.10],
+    [.954, -.98], [.920, -.86], [.835, -.77], [.790, -.77]];
+  const cornerShape = new THREE.Shape(cornerSection.map(([y, z]) => new THREE.Vector2(-z, y)));
+  for (const side of [-1, 1]) {
+    const corner = new THREE.ExtrudeGeometry(cornerShape, { depth: .12, bevelEnabled: true,
+      bevelSize: .006, bevelThickness: .006, bevelSegments: 2, steps: 1 });
+    // Shape X maps to -Z, Y to Y, and extrusion depth to X.
+    corner.applyMatrix4(new THREE.Matrix4().makeRotationY(Math.PI / 2));
+    corner.translate(side < 0 ? -.78 : .66, 0, 0);
+    add(cabin, 'closed dashboard pillar and wheel-well end cap', corner, leather);
+  }
   const lowerSeal: Point[] = Array.from({ length: 21 }, (_, i) => {
     const x = (i / 20 * 2 - 1) * .69, shoulder = (Math.abs(x) / .69) ** 2;
     return [x, .918 + .035 * shoulder, -1.361 + .39 * shoulder];
@@ -253,15 +298,36 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
   add(cabin, 'contoured leather roof headliner', roofGeometry, leather);
   for (const side of [-1, 1]) soft(cabin, 'folded leather sun visor', [.30, .018, .12], [side * .30, 1.215, -.385], leather, .007);
 
-  const mirrorGlass = new THREE.MeshStandardMaterial({ color: 0x7e929e, metalness: 1, roughness: .055, envMapIntensity: .85 });
-  mirrorGlass.name = 'Bugatti cabin / reflective rearview mirror';
+  const mirrorGlass = new THREE.MeshBasicMaterial({ color: 0xd4e3ed });
+  mirrorGlass.name = 'Bugatti cabin / live panoramic rearview glass';
   mirrorGlass.userData.cockpitDetail = true; mirrorGlass.userData.noCastShadow = true;
-  box(cabin, [.012, .028, .012], [0, 1.219, -.568], dark);
-  soft(cabin, 'rearview mirror housing', [.162, .045, .018], [0, 1.191, -.574], dark, .008);
-  soft(cabin, 'rearview mirror reflective insert', [.147, .031, .003], [0, 1.191, -.563], mirrorGlass, .005);
+  const rearview = new THREE.Group(); rearview.name = 'Bugatti cabin / rounded panoramic rearview assembly';
+  rearview.position.set(0, 1.181, -.604); rearview.rotation.set(.045, -.10, 0); cabin.add(rearview);
+  box(cabin, [.013, .037, .015], [0, 1.214, -.611], dark);
+  function roundedMirror(width: number, height: number, radius: number) {
+    const shape = new THREE.Shape(), x = -width / 2, y = -height / 2;
+    shape.moveTo(x + radius, y); shape.lineTo(x + width - radius, y);
+    shape.quadraticCurveTo(x + width, y, x + width, y + radius);
+    shape.lineTo(x + width, y + height - radius);
+    shape.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    shape.lineTo(x + radius, y + height); shape.quadraticCurveTo(x, y + height, x, y + height - radius);
+    shape.lineTo(x, y + radius); shape.quadraticCurveTo(x, y, x + radius, y);
+    return shape;
+  }
+  add(rearview, 'rounded graphite rearview housing', new THREE.ExtrudeGeometry(roundedMirror(.240, .067, .018),
+    { depth: .014, bevelEnabled: true, bevelSize: .002, bevelThickness: .002, bevelSegments: 2, curveSegments: 8 }), dark, [0, 0, -.008]);
+  add(rearview, 'rearview satin aluminum fine bezel', new THREE.ShapeGeometry(roundedMirror(.229, .057, .014), 8), metal, [0, 0, .0085]);
+  const rearviewGeometry = new THREE.ShapeGeometry(roundedMirror(.221, .049, .012), 10);
+  const mirrorPosition = rearviewGeometry.getAttribute('position'), mirrorUv = rearviewGeometry.getAttribute('uv');
+  for (let i = 0; i < mirrorUv.count; i++) mirrorUv.setXY(i, 1 - (mirrorPosition.getX(i) / .221 + .5), mirrorPosition.getY(i) / .049 + .5);
+  const rearviewMirror = add(rearview, 'live rounded panoramic rearview mirror', rearviewGeometry, mirrorGlass, [0, 0, .009]) as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  Object.assign(rearviewMirror.userData, { rearviewMirror: true, dynamic: true, noCastShadow: true });
   soft(frontCabin, 'passenger leather cowl', [.48, .145, .18], [.36, .797, -.575], leather, .04);
-  tube(frontCabin, 'passenger dashboard double seam', [[.13, .858, -.477], [.31, .86, -.470], [.52, .839, -.47], [.60, .815, -.46]], .0017, piping, 10, 3);
+  tube(frontCabin, 'passenger dashboard fitted seam', [[.18, .818, -.485], [.31, .818, -.480], [.47, .812, -.483], [.55, .798, -.489]], .0012, piping, 14, 3);
   detail(frontCabin, 'passenger Bugatti signature', [.122, .032], [.345, .801, -.480], [512, 0, 512, 128]);
+  disc(frontCabin, 'passenger mechanical clock recess', .026, [.518, .788, -.469]);
+  ring(frontCabin, 'passenger clock machined aluminum bezel', .026, .0025, [.518, .788, -.467]);
+  detail(frontCabin, 'passenger precision analog clock', [.046, .046], [.518, .788, -.466], [256, 0, 256, 256], controlLabels);
   soft(frontCabin, 'glove box lid', [.47, .125, .024], [.36, .674, -.50], leather, .015);
   box(frontCabin, [.06, .008, .009], [.36, .702, -.482], metal);
   box(frontCabin, [1.22, .023, .029], [0, .722, -.492], carbon);
@@ -312,9 +378,14 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
     const barrel = add(control, 'machined rotary control barrel', new THREE.CylinderGeometry(.022, .024, .022, 16), metal, [0, 0, .004]);
     barrel.rotation.x = Math.PI / 2;
     disc(control, 'climate rotary dial', .018, [0, 0, .018], dark, 16);
-    ring(control, 'knurled climate knob edge', .024, .003, [0, 0, .018], metal, 16);
+    ring(control, 'knurled climate knob edge', .024, .003, [0, 0, .018], metal, 32);
+    for (let tick = 0; tick < 24; tick++) {
+      const angle = tick / 24 * Math.PI * 2;
+      const grip = box(control, [.0010, .0027, .007], [Math.cos(angle) * .022, Math.sin(angle) * .022, .012], dark);
+      grip.rotation.z = angle - Math.PI / 2;
+    }
     ring(control, 'climate knob illuminated collar', .017, .0004, [0, 0, .019], lit, 16);
-    detail(control, 'rotary control temperature and mode legend', [.025, .013], [0, 0, .020], [index * 128, 352, 128, 32]);
+    detail(control, 'rotary control temperature and mode legend', [.032, .032], [0, 0, .020], [256 + index * 64, 384, 64, 64], controlLabels);
   }
   soft(frontCabin, 'leather transmission tunnel', [.216, .162, .82], [0, .541, .00], leather, .035);
   soft(frontCabin, 'brushed gear selector surround', [.146, .025, .277], [0, .631, -.077], metal, .009);
@@ -435,15 +506,19 @@ export function addDriverCockpit(body: THREE.Group, materials: CabinMaterials) {
   batchArchitecture(steeringWheel, true);
   column.userData.dynamic = true; steeringWheel.userData.dynamic = true;
   steeringWheel.traverse(object => { object.userData.dynamic = true; object.userData.cockpitDetail = true; });
-  body.userData.interior = 'Bugatti inspired orange and black leather cabin / analog instruments';
+  const finish = addCabinFinish(cabin, frontCabin, { metal, dark, leather, carbon });
+  const rearCabin = addRearCabin(cabin, { leather, dark, metal, orangeLeather });
+  const ambience = addCabinAmbience(cabin, frontCabin);
+  const steering = new CockpitSteering();
+  body.userData.interior = 'Bugatti inspired orange and black leather cabin / live panoramic mirror / cyan and violet ambient lighting';
   let timer = 0;
   return {
     // Sit over the cushion with room to see the wheel and center controls;
     // the eye still clears the binnacle and remains below the roof lining.
-    steeringWheel, dashboardMap: instruments.map, eye: new THREE.Vector3(-.32, 1.17, .04),
+    steeringWheel, steering, rearviewMirror, ambience, finish, rearCabin, dashboardMap: instruments.map, eye: new THREE.Vector3(-.32, 1.17, .04),
     get readout() { return instruments.readout; },
     update(delta: number, frame: CabinInstruments, steer: number, visible: boolean) {
-      steeringWheel.rotation.z = THREE.MathUtils.lerp(steeringWheel.rotation.z, steer * 1.18, 1 - Math.exp(-delta * 28));
+      steeringWheel.rotation.z = steering.update(delta, steer);
       if (!visible) return;
       timer += delta;
       if (timer >= .1) { timer %= .1; instruments.paint(frame); }

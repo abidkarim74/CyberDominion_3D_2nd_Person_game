@@ -377,18 +377,7 @@ export function addCityDetail(scene: THREE.Scene) {
       }
     }
   }
-  // Tunnel services, ceiling ribs, tile seams, fans and chevron panels.
-  for (let z = 77; z < 100; z += 3.2) for (const side of [-1, 1]) {
-    box(scene, -22 + side * 8.86, 3.6, z, .06, 6.8, .04, concrete);
-    box(scene, -22 + side * 8.81, .9, z, .07, .3, 1.4, z % 2 > 1 ? cyan : pink);
-    box(scene, -22 + side * 7.2, 8.9, z, .2, .23, 3.2, metal);
-    box(scene, -22 + side * 8.8, 5.9, z, .08, .055, 3.2, cyan);
-  }
-  for (const z of [79, 88, 97]) {
-    const fan = new THREE.Mesh(new THREE.CylinderGeometry(.65, .65, 1.4, 12), metal);
-    fan.rotation.x = Math.PI / 2; fan.position.set(-22, 8.3, z); scene.add(fan);
-    for (let i = 0; i < 3; i++) box(scene, -22 + (i - 1) * .3, 8.3, z - .71, .04, 1.05, .04, concrete);
-  }
+  // Tunnel services and lighting now follow each complete covered-road span.
   // Diagonal crosswalks/stop bars remain subtle, broken lane lines stop at junctions.
   const markings = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x82919d }), 18 * 18 * 16);
   let count = 0; const matrix = new THREE.Matrix4();

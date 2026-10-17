@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { nearestRoad, nearestBlock, isCitySquare } from './city-layout';
+import { nearestRoad, nearestBlock, isCitySquare, ROAD_COORDS, ROAD_WIDTH } from './city-layout';
+import { addTunnelDetails, tunnelWallSections } from './tunnel-details';
 
 type Collider = { x: number; z: number; hx: number; hz: number };
 export type CoveredRoad = Collider & { ceiling: number; label: string };
@@ -31,10 +32,11 @@ function roadSign(title: string, subtitle: string) {
   const c = document.createElement('canvas'); c.width = 512; c.height = 128;
   const ctx = c.getContext('2d')!;
   ctx.fillStyle = '#101d23'; ctx.fillRect(0, 0, 512, 128);
-  ctx.strokeStyle = '#729da5'; ctx.lineWidth = 3; ctx.strokeRect(4, 4, 504, 120);
-  ctx.fillStyle = '#cfd9dc'; ctx.font = 'bold 36px Arial'; ctx.fillText(title, 24, 53);
+  ctx.strokeStyle = '#3bd6ef'; ctx.lineWidth = 3; ctx.strokeRect(4, 4, 504, 120);
+  ctx.fillStyle = '#d7edf2'; ctx.font = `bold ${Math.min(32, 376 / (title.length * .63))}px Arial`; ctx.fillText(title, 24, 53);
   ctx.font = '18px monospace'; ctx.fillStyle = '#92a9af'; ctx.fillText(subtitle, 25, 98);
-  ctx.fillStyle = '#80b8a2'; ctx.font = 'bold 56px Arial'; ctx.fillText('↓', 456, 80);
+  ctx.fillStyle = '#efb45e'; ctx.fillRect(24, 65, 62, 3);
+  ctx.fillStyle = '#80e4cf'; ctx.font = 'bold 56px Arial'; ctx.fillText('↓', 456, 80);
   const map = new THREE.CanvasTexture(c); map.colorSpace = THREE.SRGBColorSpace;
   return new THREE.MeshBasicMaterial({ map, toneMapped: true });
 }
@@ -78,24 +80,32 @@ export function addInfrastructure(scene: THREE.Scene, colliders: Collider[]) {
     // Roofs and crash barriers extend beyond their snapped street centers.
     if (isCitySquare(x, z, 14)) continue;
     const group = new THREE.Group(); group.position.set(x, 0, z); group.rotation.y = sideways ? Math.PI / 2 : 0; scene.add(group);
-    const length = 25, half = length / 2, ceiling = tunnel ? 7.8 : 7.2;
-    covered.push({ x, z, hx: sideways ? half : 9.5, hz: sideways ? 9.5 : half, ceiling: ceiling + .5, label });
+    const length = tunnel ? 100 : 25, half = length / 2, ceiling = tunnel ? 7.8 : 7.2;
+    const crossingHalfWidth = ROAD_WIDTH / 2 + .8;
+    const longitudinalCenter = sideways ? x : z;
+    const crossings = tunnel ? ROAD_COORDS.map(road => road - longitudinalCenter)
+      .filter(at => Math.abs(at) < half + crossingHalfWidth) : [];
+    const sections = tunnelWallSections(half, crossings, crossingHalfWidth);
+    const roofHalfWidth = tunnel ? 9.7 : 13.5;
+    covered.push({ x, z, hx: sideways ? half : roofHalfWidth, hz: sideways ? roofHalfWidth : half,
+      ceiling: tunnel ? 8.45 : 8.22, label });
+    Object.assign(group.userData, { tunnelLength: tunnel ? length : undefined, infrastructureLength: length, infrastructureKind: tunnel ? 'tunnel' : 'underpass' });
     for (const side of [-1, 1]) {
-      if (tunnel) box(group, side * 9.35, 1.5, 0, .7, 3, length);
+      if (tunnel) for (const [start, end] of sections) box(group, side * 9.35, 1.5, (start + end) / 2, .7, 3, end - start);
       else for (const end of [-1, 1]) {
         box(group, side * 10, 3.6, end * 8.3, 1.6, 7.2, 2.4);
         box(group, side * 10, .65, end * 8.3, 2.1, 1.3, 2.8);
       }
-      // Low roadside crash barriers leave 17.6m clear for driving.
-      box(group, side * 9.05, .5, 0, .4, .65, length, concrete);
-      box(group, side * 8.81, .62, 0, .025, .12, length, rubber);
-      if (sideways) colliders.push({ x, z: z - side * 9.2, hx: half, hz: .45 });
-      else colliders.push({ x: x + side * 9.2, z, hx: .45, hz: half });
-      for (let at = -11; at <= 11; at += 3.6) {
-        box(group, side * 8.8, .94, at, .04, .12, .36, amber);
-        if (tunnel) {
-          box(group, side * 8.96, 2.2, at, .03, .07, 3.4, steel);
-          box(group, side * 8.92, 2.1, at, .055, .3, .065, steel);
+      // Every solid wall interval has matching curb and collision coverage.
+      // Perpendicular streets remain open across their full 18m road width.
+      for (const [start, end] of sections) {
+        const span = end - start, mid = (start + end) / 2;
+        box(group, side * 9.05, .5, mid, .4, .65, span, concrete);
+        box(group, side * 8.81, .62, mid, .025, .12, span, rubber);
+        if (sideways) colliders.push({ x: x + mid, z: z - side * 9.2, hx: span / 2, hz: .45 });
+        else colliders.push({ x: x + side * 9.2, z: z + mid, hx: .45, hz: span / 2 });
+        for (let at = start + 1.1; at < end - .3; at += 3.6) {
+          box(group, side * 8.8, .94, at, .04, .12, .36, amber);
         }
       }
     }
@@ -105,9 +115,20 @@ export function addInfrastructure(scene: THREE.Scene, colliders: Collider[]) {
       arch.lineTo(9, 3);
       for (let j = 0; j <= 32; j++) { const a = j / 32 * Math.PI; arch.lineTo(Math.cos(a) * 9, 3 + Math.sin(a) * 4.8); }
       arch.closePath();
-      const roof = new THREE.Mesh(new THREE.ExtrudeGeometry(arch, { depth: length, bevelEnabled: false, steps: 1, curveSegments: 24 }), concrete);
-      roof.position.z = -half; group.add(roof);
+      for (const [start, end] of sections) {
+        const roof = new THREE.Mesh(new THREE.ExtrudeGeometry(arch, { depth: end - start, bevelEnabled: false, steps: 1, curveSegments: 24 }), concrete);
+        roof.name = 'Tunnel / continuous arched roof section'; roof.position.z = start; group.add(roof);
+      }
+      // Raised junction halls replace the low arch shoulders over side roads.
+      // Their roof top matches the arch crown and shelters the entire crossing.
+      for (const crossing of crossings) {
+        const start = Math.max(-half, crossing - crossingHalfWidth), end = Math.min(half, crossing + crossingHalfWidth);
+        if (end <= start) continue;
+        box(group, 0, 8.125, (start + end) / 2, 19.4, .65, end - start, concrete).name = 'Tunnel / raised cross street junction roof';
+        for (const at of [start + .14, end - .14]) box(group, 0, 7.63, at, 18.9, .28, .28, steel);
+      }
       for (let at = -half; at <= half; at += 3.125) {
+        if (!sections.some(([start, end]) => at >= start && at <= end)) continue;
         const rib = new THREE.Mesh(new THREE.TorusGeometry(8.94, .08, 6, 32, Math.PI), steel);
         rib.scale.y = .53; rib.position.set(0, 3, at); group.add(rib);
       }
@@ -115,12 +136,15 @@ export function addInfrastructure(scene: THREE.Scene, colliders: Collider[]) {
         beam(group, new THREE.Vector3(side * 7.8, 5, -half), new THREE.Vector3(side * 7.8, 5, half), .08);
         beam(group, new THREE.Vector3(side * 7.5, 5.3, -half), new THREE.Vector3(side * 7.5, 5.3, half), .045);
       }
-      const vent = new THREE.Mesh(new THREE.CylinderGeometry(.58, .58, 1.7, 20, 1, true), steel);
-      vent.rotation.x = Math.PI / 2; vent.position.set(0, 6.75, 0); group.add(vent);
-      for (let j = 0; j < 4; j++) box(group, (j - 1.5) * .24, 6.75, -.86, .03, .9, .04, rubber);
-      // Inset maintenance door and emergency panel on one wall.
-      box(group, -8.97, 1.6, 4, .06, 2.4, 1.15, steel);
-      box(group, -8.91, 1.6, 4.4, .06, .06, .13, amber);
+      for (let at = -half + 11; at < half - 5; at += 24) {
+        const vent = new THREE.Mesh(new THREE.CylinderGeometry(.58, .58, 1.7, 20, 1, true), steel);
+        vent.name = 'Tunnel / suspended longitudinal jet fan';
+        vent.rotation.x = Math.PI / 2; vent.position.set(0, 6.75, at); group.add(vent);
+        for (const end of [-1, 1]) for (let j = 0; j < 4; j++) box(group, (j - 1.5) * .24, 6.75, at + end * .86, .03, .9, .04, rubber);
+        for (const side of [-1, 1]) box(group, side * .43, 7.3, at, .045, .65, .09, steel);
+      }
+      addTunnelDetails(group, { length, halfWidth: 9, ceiling, wallHeight: 3, crossings, crossingHalfWidth,
+        label, profile: 'arched', sideClearance: 5.2 });
     } else {
       box(group, 0, 7.65, 0, 27, .9, length);
       box(group, 0, 8.15, 0, 27, .14, length - 1, rubber);
@@ -133,20 +157,20 @@ export function addInfrastructure(scene: THREE.Scene, colliders: Collider[]) {
         box(group, 0, 9.35, side * (half - .25), 27, .1, .12, steel);
       }
     }
-    for (let at = -9; at <= 9; at += 6) for (const side of [-1, 1]) {
+    for (let at = -9; !tunnel && at <= 9; at += 6) for (const side of [-1, 1]) {
       box(group, side * 3.8, 6.7, at, .38, .16, 1.6, steel);
       box(group, side * 3.8, 6.6, at, .28, .035, 1.35, index % 2 ? coolLamp : warmLamp);
     }
     for (const end of [-1, 1]) {
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 1.65), roadSign(label, 'CLEARANCE 6.0 M   /   KEEP LEFT'));
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 1.65), roadSign(label, `${length} M LINK   /   CLEARANCE 6.0 M`));
       sign.position.set(0, tunnel ? 8.5 : 8, end * (half + .08)); sign.rotation.y = end < 0 ? Math.PI : 0; group.add(sign);
       box(group, 0, sign.position.y, end * half, 6.85, 1.85, .15, steel);
       for (const side of [-1, 1]) for (let j = 0; j < 5; j++) {
         const stripe = box(group, side * 9.25, .4 + j * .31, end * (half + .05), .43, .13, .06, j % 2 ? amber : rubber);
         stripe.rotation.z = side * .3;
       }
-      const light = new THREE.PointLight(index % 2 ? 0xc8d8ec : 0xffc691, 65, 16, 2);
-      light.position.set(0, 5.8, end * 6); group.add(light);
+      const light = new THREE.PointLight(index % 2 ? 0xc8d8ec : 0xffc691, tunnel ? 110 : 65, tunnel ? 58 : 16, 2);
+      light.position.set(0, 5.8, end * (tunnel ? half * .52 : 6)); group.add(light);
     }
   }
   // Street furniture is set behind the kerb: shelters, seats, cabinets and drain gratings.
