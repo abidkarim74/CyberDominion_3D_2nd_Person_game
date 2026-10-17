@@ -32,14 +32,13 @@ try {
       g.setGraphicsQuality(preset); g.qualityWarmup = Infinity;
       g.elapsed = 40; g.setCameraView('chase'); g.updateCamera(0, true);
       g.updateCityVisibility(g.carPosition, 0, GRAPHICS_PRESETS[preset].detailScale);
-      g.reflections.invalidate(); g.scene.updateMatrixWorld(true);
+      g.scene.updateMatrixWorld(true);
       g.renderer.shadowMap.needsUpdate = true; g.composer.render();
-      const reflection = g.reflections.mirror.getRenderTarget();
       const colliders = g.colliders;
       const colliderFingerprint = colliders.reduce((hash, c) => (Math.imul(hash, 31) + Math.round(c.x * 100) + Math.round(c.z * 100) + Math.round(c.hx * 1000) + Math.round(c.hz * 1000)) | 0, 17);
       return { ...g.getGraphicsStatus(), profile: GRAPHICS_PRESETS[preset],
         scene: [g.composer.readBuffer.width, g.composer.readBuffer.height],
-        shadow: g.keyLight.shadow.mapSize.x, reflection: [reflection.width, reflection.height],
+        shadow: g.keyLight.shadow.mapSize.x, roadReflection: g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false,
         bloom: [g.bloomPass.bloomTexture.image.width, g.bloomPass.bloomTexture.image.height],
         edgeQuality: g.presentationPass.uniforms.resolveQuality.value,
         snow: g.snowfall.flakes.geometry.drawRange.count,
@@ -120,13 +119,13 @@ try {
     assert.equal(performance.qualityPressure, 0, 'Manual presets remain fixed while benchmarking');
     assert.ok(performance.frameMs.n > 10 && performance.speed.mean > 100, 'Real moving frames were sampled');
     assert.equal(result.shadow, result.profile.shadowSize);
-    assert.equal(result.reflection[0], result.profile.reflectionSize);
+    assert.equal(result.roadReflection, false, 'Matte roads have no wet-road mirror at every graphics preset');
     assert.equal(result.snow, Math.floor(3200 * result.profile.snowDensity));
     assert.equal(result.mainRoadClear, true, 'Main driving lane stays clear');
     if (report.presets.length > 1) {
       const previous = report.presets.at(-2);
       assert.ok(result.scene[0] * result.scene[1] > previous.scene[0] * previous.scene[1], 'Scene detail increases each tier');
-      assert.ok(result.shadow >= previous.shadow && result.reflection[0] >= previous.reflection[0], 'Capture detail never decreases');
+      assert.ok(result.shadow >= previous.shadow, 'Shadow detail never decreases');
       assert.equal(result.colliders, previous.colliders); assert.equal(result.colliderFingerprint, previous.colliderFingerprint);
     }
     console.log(`${preset}: ${performance.frameMs.mean.toFixed(1)}ms mean / ${performance.frameMs.p95.toFixed(1)}ms p95, CPU ${performance.cpuFrameMs.mean.toFixed(1)}ms, GPU ${performance.gpuFrameMs.mean.toFixed(1)}ms`);

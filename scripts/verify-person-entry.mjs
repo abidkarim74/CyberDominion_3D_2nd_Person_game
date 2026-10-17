@@ -210,7 +210,6 @@ try {
   ]) {
     const visiblePixels = await page.evaluate(({ camera, target }) => {
       const g = document.querySelector('canvas').__drive, hinge = g.carRig.driverDoor;
-      const mirror = g.reflections.mirror, mirrorVisible = mirror.visible; mirror.visible = false;
       window.__entryCheck.renderCamera(camera, target);
       const canvas = document.createElement('canvas'); canvas.width = g.renderer.domElement.width; canvas.height = g.renderer.domElement.height;
       const context = canvas.getContext('2d', { willReadFrequently: true });
@@ -218,7 +217,7 @@ try {
       const before = pixels(); hinge.visible = false; const after = pixels(); hinge.visible = true;
       let count = 0;
       for (let i = 0; i < before.length; i += 4) if (Math.max(Math.abs(before[i] - after[i]), Math.abs(before[i + 1] - after[i + 1]), Math.abs(before[i + 2] - after[i + 2])) > 8) count++;
-      mirror.visible = mirrorVisible; g.composer.render();
+      g.composer.render();
       return count;
     }, { camera, target });
     report.checks[`openDoor${name}`] = { visiblePixels };

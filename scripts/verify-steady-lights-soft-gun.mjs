@@ -11,7 +11,7 @@ try {
   // Isolate static lighting from moving weather and aircraft for the pixel comparison.
   g.__lightVisibility=[];
   const hide=o=>{g.__lightVisibility.push([o,o.visible]);o.visible=false};
-  g.scene.traverse(o=>{if(o.isPoints||o===g.rain)hide(o)});g.flying.forEach(f=>hide(f.vehicle));hide(g.reflections.mirror);
+  g.scene.traverse(o=>{if(o.isPoints||o===g.rain)hide(o)});g.flying.forEach(f=>hide(f.vehicle));
  });
  await page.waitForTimeout(1400);
  const staticState=()=>page.evaluate(()=>{

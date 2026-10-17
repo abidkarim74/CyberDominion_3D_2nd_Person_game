@@ -169,8 +169,6 @@ try {
       // Remove only the actual gloved-hand triangles, even if boots share their
       // exported mesh/material. This proves visible winter gloves in the cockpit.
       visiblePixels(role) {
-        const mirror = g.reflections.mirror, mirrorVisible = mirror.visible;
-        mirror.visible = false;
         const before = capture(), changed = [];
         for (const mesh of meshes.filter(winterMesh)) {
           if (role === 'parka' && /coat|parka/i.test(label(mesh))) {
@@ -201,7 +199,7 @@ try {
             pixels++; if (i / 4 >= before.width * before.height * .5) lowerPixels++;
           }
         }
-        mirror.visible = mirrorVisible; g.composer.render();
+        g.composer.render();
         return { pixels, lowerPixels, affectedMeshes: changed.map(entry => entry.mesh.name) };
       },
       headTriangles() {

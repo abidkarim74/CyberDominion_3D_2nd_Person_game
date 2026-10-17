@@ -14,11 +14,10 @@ try {
  const steeringPixels=await page.evaluate(()=>{
   const g=document.querySelector('canvas').__drive,wheel=g.carRig.cockpit.steeringWheel;
   cancelAnimationFrame(g.animationFrame);
-  const mirror=g.reflections.mirror,mirrorWasVisible=mirror.visible;mirror.visible=false;
   const canvas=document.createElement('canvas');canvas.width=g.renderer.domElement.width;canvas.height=g.renderer.domElement.height;
   const context=canvas.getContext('2d',{willReadFrequently:true});
   function pixels(){g.composer.render();context.drawImage(g.renderer.domElement,0,0);return context.getImageData(0,0,canvas.width,canvas.height).data}
-  const withWheel=pixels();wheel.visible=false;const withoutWheel=pixels();wheel.visible=true;mirror.visible=mirrorWasVisible;
+  const withWheel=pixels();wheel.visible=false;const withoutWheel=pixels();wheel.visible=true;
   let count=0;for(let i=Math.floor(canvas.height/2)*canvas.width*4;i<withWheel.length;i+=4)if(Math.max(Math.abs(withWheel[i]-withoutWheel[i]),Math.abs(withWheel[i+1]-withoutWheel[i+1]),Math.abs(withWheel[i+2]-withoutWheel[i+2]))>3)count++;
   g.previousTime=0;g.animationFrame=requestAnimationFrame(g.frameHandler);return count;
  });

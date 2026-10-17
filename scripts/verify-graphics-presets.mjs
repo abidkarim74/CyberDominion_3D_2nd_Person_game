@@ -32,9 +32,8 @@ try {
     const state = await page.evaluate(async () => {
       const g = document.querySelector('canvas').__drive;
       const { GRAPHICS_PRESETS } = await import('/lib/graphics-quality.ts');
-      const target = g.reflections.mirror.getRenderTarget();
       return { ...g.getGraphicsStatus(), profile: GRAPHICS_PRESETS[g.getGraphicsStatus().preset], shadow: g.keyLight.shadow.mapSize.x,
-        reflection: [target.width, target.height], snow: g.snowfall.flakes.geometry.drawRange.count,
+        roadReflection: g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false, snow: g.snowfall.flakes.geometry.drawRange.count,
         localLights: g.scene.children.filter(o => o.isPointLight && o.visible && o.intensity > 0).length,
         scene: [g.composer.readBuffer.width, g.composer.readBuffer.height],
         edgeQuality: g.presentationPass.uniforms.resolveQuality.value,
@@ -46,7 +45,7 @@ try {
     assert.equal(state.automatic, false, 'A manual preset stays fixed');
     assert.equal(state.contextLost, false);
     assert.equal(state.active, false, 'Driving pauses while graphics are open');
-    assert.deepEqual(state.reflection, [state.profile.reflectionSize, state.profile.reflectionSize]);
+    assert.equal(state.roadReflection, false, 'Matte roads have no wet-road mirror at every graphics preset');
     assert.equal(state.shadow, state.profile.shadowSize);
     assert.equal(state.snow, Math.floor(3200 * state.profile.snowDensity));
     if (index) {
@@ -57,7 +56,7 @@ try {
       assert.equal(state.colliders, previous.colliders, 'Preset switching preserves collision geometry');
     }
     report.presets.push(state);
-    console.log(`${quality}: ${Math.round(state.resolutionScale * 100)}% scene scale, ${state.reflection[0]}px reflections`);
+    console.log(`${quality}: ${Math.round(state.resolutionScale * 100)}% scene scale, matte road surface`);
   }
   await page.screenshot({ path: `${directory}/ultra-settings.png` });
   console.log('All presets rendered; capturing Ultra camera views');

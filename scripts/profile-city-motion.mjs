@@ -54,7 +54,7 @@ try {
         }
         requestAnimationFrame(tick);
       });
-      return { name, framesMs: summary(frames.slice(1)), calls: summary(calls), triangles: summary(triangles), cpu: Object.fromEntries(Object.entries(samples).map(([k, v]) => [k, summary(v)])), pixelRatio: g.renderer.getPixelRatio(), shadows: g.renderer.shadowMap.enabled, reflection: g.reflections.mirror.visible, quality: g.qualityLevel, speedKmh: g.velocity.length() * 3.6 };
+      return { name, framesMs: summary(frames.slice(1)), calls: summary(calls), triangles: summary(triangles), cpu: Object.fromEntries(Object.entries(samples).map(([k, v]) => [k, summary(v)])), pixelRatio: g.renderer.getPixelRatio(), shadows: g.renderer.shadowMap.enabled, reflection: g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false, quality: g.qualityLevel, speedKmh: g.velocity.length() * 3.6 };
     }
     const parked = await measure('parked', false);
     const driving = await measure('driving', true);

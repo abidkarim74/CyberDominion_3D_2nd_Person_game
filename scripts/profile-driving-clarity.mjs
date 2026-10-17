@@ -44,7 +44,7 @@ try {
         g.qualityWarmup = 1e9;
         g.renderPixelRatio = () => Math.min(devicePixelRatio || 1, 1.25, Math.sqrt(s.pixels / (innerWidth * innerHeight)));
         g.updateCityVisibility = p => g.originalClarityVisibility(p, s.cityTier);
-        g.qualityLevel = s.tier; g.reflections.setQuality(s.tier);
+        g.qualityLevel = s.tier;
         g.renderer.shadowMap.enabled = s.tier < 3;
         g.renderer.shadowMap.needsUpdate = s.tier < 3;
         g.resize();
@@ -103,7 +103,7 @@ try {
             if (previousTier !== g.qualityLevel) {
               previousTier = g.qualityLevel;
               timeline.push({ seconds:age/1000, tier:g.qualityLevel, sourcePixels:sourcePixels.at(-1),
-                bloom:g.bloomPass.enabled, reflection:g.reflections.mirror.visible, shadows:g.renderer.shadowMap.enabled });
+                bloom:g.bloomPass.enabled, reflection:g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false, shadows:g.renderer.shadowMap.enabled });
             }
             if (age > warmup) {
               collecting = true;
@@ -124,7 +124,7 @@ try {
         return { frameMs:summarize(frames), cpuRenderMs:summarize(cpu), gpuRenderMs:summarize(gpu), draws:summarize(draws),
           tier:g.qualityLevel, sampledTiers:[...new Set(tiers)], source:[g.composer.readBuffer.width,g.composer.readBuffer.height],
           canvas:[g.renderer.domElement.width,g.renderer.domElement.height], bloom:g.bloomPass.enabled,
-          bloomType:g.bloomPass.constructor.name, reflection:g.reflections.mirror.visible,
+          bloomType:g.bloomPass.constructor.name, reflection:g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false,
           shadows:g.renderer.shadowMap.enabled, blurStrength:g.presentationPass.uniforms.strength.value,
           sourcePixelRange:[Math.min(...sourcePixels),Math.max(...sourcePixels)], timeline,
           boostingFrames, firingFrames, contextLost:gl.isContextLost() };
@@ -149,7 +149,7 @@ try {
     const g = document.querySelector('canvas').__drive;
     return { viewport:[innerWidth,innerHeight], source:[g.composer.readBuffer.width,g.composer.readBuffer.height],
       canvas:[g.renderer.domElement.width,g.renderer.domElement.height], overflow:document.documentElement.scrollWidth>innerWidth,
-      reflection:g.reflections.mirror.visible, contextLost:g.renderer.getContext().isContextLost() };
+      reflection:g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false, contextLost:g.renderer.getContext().isContextLost() };
   });
   console.log(JSON.stringify({mobile,errors},null,2));
   await writeFile(`artifacts/driving-clarity/${label}.json`, JSON.stringify({ reports, mobile, errors }, null, 2));

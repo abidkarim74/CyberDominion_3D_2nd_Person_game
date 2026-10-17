@@ -27,7 +27,7 @@ try {
     let meshes = 0, staticBatches = 0, pointLights = 0;
     const features = [];
     g.scene.traverse(o => { if (o.isMesh) meshes++; if (o.userData.cityBounds) staticBatches++; if (o.isPointLight) pointLights++; if (/cyber|district|advert|billboard|storefront|skyline|ocean|snow|hologram|lantern|market/i.test(o.name) && features.length < 80) features.push({ name: o.name, visible: o.visible, count: o.count }); });
-    return { framesMs: summarize(intervals), calls: summarize(calls), triangles: summarize(triangles), pixelRatio: g.renderer.getPixelRatio(), qualityLevel: g.qualityLevel, averageFrame: g.averageFrame, reflectionVisible: g.reflections.mirror.visible, gpu: extension && gl.getParameter(extension.UNMASKED_RENDERER_WEBGL), contextLost: gl.isContextLost(), meshes, staticBatches, pointLights, features };
+    return { framesMs: summarize(intervals), calls: summarize(calls), triangles: summarize(triangles), pixelRatio: g.renderer.getPixelRatio(), qualityLevel: g.qualityLevel, averageFrame: g.averageFrame, reflectionVisible: g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false, gpu: extension && gl.getParameter(extension.UNMASKED_RENDERER_WEBGL), contextLost: gl.isContextLost(), meshes, staticBatches, pointLights, features };
   });
   const regions = [];
   for (const [region, x, z, yaw] of [['central', -22, -22, 0], ['north', 22, -330, Math.PI], ['east', 330, 220, Math.PI], ['west', -330, 0, 0]]) {

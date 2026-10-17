@@ -50,7 +50,7 @@ try {
   }
   await page.evaluate(() => {
     const g=document.querySelector('canvas').__drive;g.reset();g.active=false;g.qualityWarmup=1e9;
-    g.qualityLevel=0;g.reflections.setQuality(0);g.renderer.shadowMap.enabled=true;g.renderer.shadowMap.needsUpdate=true;g.resize();
+    g.qualityLevel=0;g.renderer.shadowMap.enabled=true;g.renderer.shadowMap.needsUpdate=true;g.resize();
     g.carPosition.set(-22,.015,-22);g.updateCityVisibility(g.carPosition,0);g.updateCamera(0,true);
   });
   await page.waitForTimeout(2000);

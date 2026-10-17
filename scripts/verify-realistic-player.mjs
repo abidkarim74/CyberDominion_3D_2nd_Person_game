@@ -124,10 +124,7 @@ try {
         game.camera.lookAt(person.root.localToWorld(target));
         game.camera.near = .025; game.camera.fov = closeup ? 36 : 39; game.camera.updateProjectionMatrix();
         game.scene.updateMatrixWorld(true);
-        // Road reflection capture has a different oblique clipping plane at a
-        // custom portrait camera. Disable it for this one QA render only.
-        const mirror=game.reflections.mirror,visible=mirror.visible;mirror.visible=false;
-        try { game.composer.render(); return game.renderer.domElement.toDataURL('image/png'); } finally { mirror.visible=visible; }
+        game.composer.render(); return game.renderer.domElement.toDataURL('image/png');
       },
       renderSeated() {
         game.carRig.driverDoor.rotation.y = -.96;
@@ -135,8 +132,7 @@ try {
         game.camera.lookAt(game.carPosition.clone().add(point.set(-.35, .8, -.15)));
         game.camera.near = .025; game.camera.fov = 40; game.camera.updateProjectionMatrix();
         game.scene.updateMatrixWorld(true);
-        const mirror=game.reflections.mirror,visible=mirror.visible;mirror.visible=false;
-        try { game.composer.render(); return game.renderer.domElement.toDataURL('image/png'); } finally { mirror.visible=visible; }
+        game.composer.render(); return game.renderer.domElement.toDataURL('image/png');
       },
     };
   });

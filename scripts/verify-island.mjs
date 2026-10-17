@@ -125,8 +125,6 @@ try {
   const visiblePixels = await page.evaluate(() => {
     const g = document.querySelector('.game-canvas').__drive;
     cancelAnimationFrame(g.animationFrame);
-    const mirror = g.reflections.mirror;
-    mirror.visible = false;
     const c = document.createElement('canvas');
     c.width = g.renderer.domElement.width;
     c.height = g.renderer.domElement.height;
@@ -163,7 +161,6 @@ try {
       skyline: difference(withAll, withoutSkyline),
       animatedWater: difference(withAll, nextWave),
     };
-    mirror.visible = true;
     g.previousTime = 0;
     g.animationFrame = requestAnimationFrame(g.frameHandler);
     return result;
@@ -251,7 +248,6 @@ try {
     g.camera.lookAt(0, 70, -150);
     g.camera.fov = 55;
     g.camera.updateProjectionMatrix();
-    g.reflections.mirror.visible = false;
     function renderOverview() {
       g.composer.render();
       g.testOverviewFrame = requestAnimationFrame(renderOverview);

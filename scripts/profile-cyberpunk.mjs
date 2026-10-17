@@ -48,10 +48,9 @@ try {
       return { medianMs: frames[37], p95Ms: frames[71], calls: { median: calls[37], p95: calls[71] }, triangles: { median: triangles[37], p95: triangles[71] } };
     };
     const full = await measure();
-    g.reflections.mirror.visible = false; const noReflection = await measure(); g.reflections.mirror.visible = true;
     const bloom = g.composer.passes[1]; bloom.enabled = false; const noBloom = await measure(); bloom.enabled = true;
     g.island.water.visible = false; const noOcean = await measure();
-    return { gpu, pixelRatio: g.renderer.getPixelRatio(), topVisible: meshCosts.filter(m => m.inView).slice(0, 25), topTotal: meshCosts.slice(0, 25), full, noReflection, noBloom, noOcean };
+    return { gpu, pixelRatio: g.renderer.getPixelRatio(), topVisible: meshCosts.filter(m => m.inView).slice(0, 25), topTotal: meshCosts.slice(0, 25), full, noBloom, noOcean };
   });
   await writeFile('artifacts/cyberpunk-profile.json', JSON.stringify(profile, null, 2));
   console.log(JSON.stringify(profile, null, 2));

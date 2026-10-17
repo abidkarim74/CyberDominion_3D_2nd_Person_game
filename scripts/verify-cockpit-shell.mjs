@@ -19,7 +19,6 @@ try {
     const g = document.querySelector('canvas').__drive;
     cancelAnimationFrame(g.animationFrame); g.reset(); g.active = false;
     g.carRig.body.position.y = 0; g.carRig.body.rotation.set(0, 0, 0); g.updateCamera(0, true);
-    const mirror = g.reflections.mirror, mirrorVisible = mirror.visible; mirror.visible = false;
     const glass = g.carRig.body.children.find(o => o.userData.carPart === 'body' && o.material?.name === 'Bugatti cabin / clear inner laminated windows');
     const canvas = { width: g.renderer.domElement.width, height: g.renderer.domElement.height };
     // Read a retained GPU target; the default WebGL canvas can be discarded
@@ -68,7 +67,6 @@ try {
     const withBonnet = pixels(); bonnetParts.forEach(({ mesh }) => { mesh.visible = false; }); const withoutBonnet = pixels();
     const bonnetPixels = changedPixels(withBonnet, withoutBonnet, .25, .75);
     for (const { mesh, source, wasVisible } of bonnetParts) { mesh.removeFromParent(); mesh.geometry.dispose(); mesh.material.dispose(); source.visible = wasVisible; }
-    mirror.visible = mirrorVisible;
     target.dispose();
     let invalidGeometry = 0;
     g.car.traverse(o => { if (o.isMesh) for (const name of ['position', 'normal', 'uv']) { const attribute = o.geometry.attributes[name]; if (attribute && !Array.from(attribute.array).every(Number.isFinite)) invalidGeometry++; } });

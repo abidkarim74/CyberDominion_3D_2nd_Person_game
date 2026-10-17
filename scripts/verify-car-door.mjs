@@ -81,7 +81,7 @@ try {
       g.camera.lookAt(g.carPosition.clone().add(v.set(...target)));
       g.camera.near = .025; g.camera.fov = 45; g.camera.updateProjectionMatrix();
       g.scene.updateMatrixWorld(true); g.renderer.shadowMap.needsUpdate = true;
-      g.reflections.invalidate(); g.renderer.info.reset();
+      g.renderer.info.reset();
       for (let i = 0; i < 3; i++) g.composer.render();
     }, { angle, camera, target });
     await page.screenshot({ path: `artifacts/car-door-${name}.png` });

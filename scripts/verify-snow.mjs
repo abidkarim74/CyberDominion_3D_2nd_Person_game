@@ -116,7 +116,7 @@ try {
     const oldDrawRange = { ...flakes.geometry.drawRange }, oldTarget = renderer.getRenderTarget();
     const isolated = new game.scene.constructor();
     const camera = new game.camera.constructor(66, 1, .1, 100);
-    const target = new (game.reflections.mirror.getRenderTarget().constructor)(256, 256);
+    const target = new (game.composer.readBuffer.constructor)(256, 256);
     const pixelBuffer = new Uint8Array(256 * 256 * 4);
     const oldShelters = uniforms.shelters.value;
     const roof = game.coveredRoads[0];

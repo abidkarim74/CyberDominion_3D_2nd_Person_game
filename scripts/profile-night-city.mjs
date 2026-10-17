@@ -70,7 +70,6 @@ try {
     const originalBloom = g.bloomPass.enabled;
     const setQuality = quality => {
       g.qualityLevel = quality;
-      g.reflections.setQuality(quality);
       g.renderer.shadowMap.enabled = quality < 3;
       g.renderer.shadowMap.needsUpdate = quality < 3;
       g.resize();
@@ -82,7 +81,7 @@ try {
     const shore = objects.filter(o => o.name === 'Island / breakwater boulders' || o.name === 'Island / raised ground and stone seawall');
     const car = [];
     g.car.traverse(o => { if (o.isMesh || o.isPoints || o.isLine) car.push(o); });
-    const roadObjects = objects.filter(o => o.isMesh && !Array.isArray(o.material) && o.material.customProgramCacheKey().includes('night-city-wet-asphalt'));
+    const roadObjects = objects.filter(o => o.isMesh && !Array.isArray(o.material) && o.material.customProgramCacheKey().includes('night-city-matte-asphalt'));
     const defaultRoadMaterials = new Map();
     const defaultRoad = original => {
       let material = defaultRoadMaterials.get(original);
@@ -93,7 +92,7 @@ try {
       material.onBeforeCompile = shader => {
         if (staticBatch) shader.vertexShader = shader.vertexShader.replace('#include <batching_vertex>', '#ifdef USE_BATCHING\nmat4 batchingMatrix = mat4(1.0);\n#endif');
       };
-      material.customProgramCacheKey = () => `profile-default-wet-road|${staticBatch}`;
+      material.customProgramCacheKey = () => `profile-default-matte-road|${staticBatch}`;
       material.needsUpdate = true;
       defaultRoadMaterials.set(original, material);
       return material;
@@ -133,7 +132,7 @@ try {
       for (const [object, material] of savedRoad) object.material = defaultRoad(material);
       g.bloomPass.enabled = bloom;
       try {
-        // Shader swaps and reflection/shadow captures complete before the measurement begins.
+        // Shader swaps and shadow captures complete before the measurement begins.
         await pause(1500);
         if (g !== document.querySelector('canvas').__drive || g.destroyed) throw new Error('Source changed during benchmark');
         for (const samples of Object.values(cpuSamples)) samples.length = 0;
@@ -153,7 +152,7 @@ try {
         });
         collecting = false;
         const cpu = Object.fromEntries(Object.entries(cpuSamples).map(([key, values]) => [key, summarize(values)]));
-        const report = { name, framesMs: summarize(frames), calls: summarize(calls), triangles: summarize(triangles), cpu, gpuRenderMs: summarize(gpuTimes), quality: g.qualityLevel, pixelRatio: g.renderer.getPixelRatio(), reflection: g.reflections.mirror.visible, shadows: g.renderer.shadowMap.enabled, bloom: g.bloomPass.enabled, hiddenObjects: hide.length, replacedRoadObjects: savedRoad.length, positionStart, positionEnd: g.carPosition.toArray(), elapsedSeconds: g.elapsed - elapsedStart, speedKmh: g.velocity.length() * 3.6, contextLost: gl.isContextLost() };
+        const report = { name, framesMs: summarize(frames), calls: summarize(calls), triangles: summarize(triangles), cpu, gpuRenderMs: summarize(gpuTimes), quality: g.qualityLevel, pixelRatio: g.renderer.getPixelRatio(), reflection: g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false, shadows: g.renderer.shadowMap.enabled, bloom: g.bloomPass.enabled, hiddenObjects: hide.length, replacedRoadObjects: savedRoad.length, positionStart, positionEnd: g.carPosition.toArray(), elapsedSeconds: g.elapsed - elapsedStart, speedKmh: g.velocity.length() * 3.6, contextLost: gl.isContextLost() };
         console.log(`PROFILE Finished ${name}: frame p50=${report.framesMs.p50.toFixed(1)}ms p95=${report.framesMs.p95.toFixed(1)}ms; CPU render=${report.cpu.composerRender.p50.toFixed(1)}ms; calls=${report.calls.p50}; triangles=${report.triangles.p50}`);
         return report;
       } finally {
@@ -191,7 +190,7 @@ try {
     const g = document.querySelector('canvas').__drive;
     g.__profileWarmup = g.qualityWarmup; g.qualityWarmup = 1e9;
     g.reset(); g.active = false; g.qualityLevel = 0;
-    g.reflections.setQuality(0); g.renderer.shadowMap.enabled = true;
+    g.renderer.shadowMap.enabled = true;
     g.renderer.shadowMap.needsUpdate = true;
     g.resize(); g.updateCityVisibility(g.carPosition, 0); g.updateCamera(0, true);
   });

@@ -72,9 +72,9 @@ try {
   const quality = await page.evaluate(() => {
     const g = document.querySelector('canvas').__drive;
     g.qualityLevel = 0; g.qualityWarmup = -1;
-    g.reflections.setQuality(0); g.renderer.shadowMap.enabled = true; g.resize();
+    g.renderer.shadowMap.enabled = true; g.resize();
     const before = { pixelRatio: g.renderer.getPixelRatio(), snowCount: g.snowfall.flakes.geometry.drawRange.count,
-      shadowSize:g.keyLight.shadow.mapSize.x, reflectionWidth:g.reflections.mirror.getRenderTarget().width };
+      shadowSize:g.keyLight.shadow.mapSize.x };
     g.active = false;
     // Simulate sustained slow frames without the expensive GPU render.
     const render = g.composer.render;
@@ -85,21 +85,20 @@ try {
     let gpuBatches = 0, blocks = 0;
     g.scene.traverse(o => { if (o.isBatchedMesh) { gpuBatches++; blocks += o.userData.cityBatchEntries.length; } });
     return { before, after: { pixelRatio: g.renderer.getPixelRatio(), snowCount: g.snowfall.flakes.geometry.drawRange.count,
-      shadowSize:g.keyLight.shadow.mapSize.x, reflectionWidth:g.reflections.mirror.getRenderTarget().width },
-      tier:g.qualityLevel, shadows:g.renderer.shadowMap.enabled, reflection:g.reflections.mirror.visible,
+      shadowSize:g.keyLight.shadow.mapSize.x },
+      tier:g.qualityLevel, shadows:g.renderer.shadowMap.enabled, reflection:g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false,
       bloom:g.bloomPass.enabled, gpuBatches, blocks, multiDraw: !!g.renderer.getContext().getExtension('WEBGL_multi_draw') };
   });
   assert.equal(quality.after.pixelRatio, quality.before.pixelRatio, 'Sustained slow frames preserve the starting render resolution');
-  assert.ok(quality.tier===4&&quality.after.shadowSize<quality.before.shadowSize&&quality.after.reflectionWidth<quality.before.reflectionWidth, 'Sustained overload reduces reflection and shadow capture cost');
+  assert.ok(quality.tier===4&&quality.after.shadowSize<quality.before.shadowSize, 'Sustained overload reduces shadow capture cost');
   assert.equal(quality.before.snowCount, quality.after.snowCount, 'Adaptive rendering preserves weather coverage');
-  assert.ok(quality.shadows&&quality.reflection&&quality.bloom&&quality.gpuBatches>0, 'The lowest effects tier retains shadows, wet-road reflections, neon glow and city geometry');
+  assert.ok(quality.shadows&&quality.bloom&&quality.gpuBatches>0, 'The lowest effects tier retains shadows, neon glow and city geometry');
+  assert.equal(quality.reflection, false, 'Matte roads have no wet-road mirror at any quality tier');
   assert.deepEqual(errors, [], 'No browser runtime errors');
   const visual = await page.evaluate(() => {
     const g = document.querySelector('canvas').__drive;
     g.reset(); g.active = false; g.updateCamera(0, true); g.updateSnow(0); g.updateCityVisibility(g.carPosition);
     g.composer.render();
-    const capture = g.reflections.mirror.onBeforeRender;
-    g.reflections.mirror.onBeforeRender = () => {};
     g.renderer.shadowMap.needsUpdate = false;
     const sky = []; g.scene.traverse(o => { if (o.name === 'Island / blue hour sky and marine haze' || o.name === 'Cyberpunk / industrial night sky') sky.push(o); });
     const orders = sky.map(o => o.renderOrder), oceanOrder = g.island.water.renderOrder;
@@ -112,7 +111,6 @@ try {
     const optimized = pixels();
     let maxDifference = 0, squaredDifference = 0;
     for (let i = 0; i < original.length; i++) { const difference = Math.abs(original[i] - optimized[i]); maxDifference = Math.max(maxDifference, difference); squaredDifference += difference * difference; }
-    g.reflections.mirror.onBeforeRender = capture;
     return { maxDifference, rmsDifference: Math.sqrt(squaredDifference / original.length) };
   });
   assert.ok(visual.rmsDifference < .5, 'Avoiding hidden sky/ocean pixels preserves the rendered image');

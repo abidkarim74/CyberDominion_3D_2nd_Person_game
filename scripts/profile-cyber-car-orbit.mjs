@@ -45,7 +45,7 @@ try {
       if (frames.length < 100) requestAnimationFrame(tick); else resolve();
     } requestAnimationFrame(tick); });
     const summarize = values => { const sorted = [...values].sort((a, b) => a - b); return { count: sorted.length, median: sorted[Math.floor(sorted.length / 2)] ?? null, p95: sorted[Math.floor(sorted.length * .95)] ?? null, max: sorted.at(-1) ?? null }; };
-    return { label, view: g.cameraView, framesMs: summarize(frames), renderCpuMs: summarize(p.cpu), gpuMs: summarize(p.gpu), gpuTimerSupported: !!p.ext, calls: summarize(calls), triangles: summarize(triangles), initialQuality, qualityLevel: g.qualityLevel, averageFrame: g.averageFrame, pixelRatio: g.renderer.getPixelRatio(), camera: g.camera.position.toArray(), reflectionVisible: g.reflections.mirror.visible, bloomEnabled: g.composer.passes[1].enabled, contextLost: g.renderer.getContext().isContextLost() };
+    return { label, view: g.cameraView, framesMs: summarize(frames), renderCpuMs: summarize(p.cpu), gpuMs: summarize(p.gpu), gpuTimerSupported: !!p.ext, calls: summarize(calls), triangles: summarize(triangles), initialQuality, qualityLevel: g.qualityLevel, averageFrame: g.averageFrame, pixelRatio: g.renderer.getPixelRatio(), camera: g.camera.position.toArray(), reflectionVisible: g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false, bloomEnabled: g.composer.passes[1].enabled, contextLost: g.renderer.getContext().isContextLost() };
   }, label);
   const results = [await measure('chase-active')];
   await page.getByRole('button', { name: 'Inspect car from all sides', exact: true }).click();
@@ -59,13 +59,10 @@ try {
   await page.evaluate(() => { const g = document.querySelector('canvas').__drive; g.orbitAzimuth = -1.52; g.orbitElevation = .44; g.orbitDistance = 6.48; });
   await page.waitForTimeout(12000);
   results.push(await measure('orbit-drag-pinch-angle-settled'));
-  await page.evaluate(() => { const g = document.querySelector('canvas').__drive; g.reflections.mirror.visible = false; });
-  await page.waitForTimeout(700);
-  results.push(await measure('orbit-reflection-off'));
   await page.evaluate(() => { const g = document.querySelector('canvas').__drive; g.composer.passes[1].enabled = false; });
   await page.waitForTimeout(700);
-  results.push(await measure('orbit-reflection-bloom-off'));
-  await page.evaluate(() => { const g = document.querySelector('canvas').__drive; g.reflections.mirror.visible = g.qualityLevel < 3; g.composer.passes[1].enabled = true; });
+  results.push(await measure('orbit-bloom-off'));
+  await page.evaluate(() => { const g = document.querySelector('canvas').__drive; g.composer.passes[1].enabled = true; });
   await page.waitForTimeout(700);
   results.push(await measure('orbit-restored'));
   await mkdir('artifacts', { recursive: true });

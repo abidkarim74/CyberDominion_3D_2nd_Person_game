@@ -22,7 +22,7 @@ try {
   await page.waitForTimeout(4000);
   const setTier = tier => page.evaluate(tier => {
     const g = document.querySelector('canvas').__drive;
-    g.qualityLevel = tier; g.reflections.setQuality(tier);
+    g.qualityLevel = tier;
     // Older versions did not connect this quality control; don't change their behavior.
     if (g.presentationPass) g.island.aurora.setQuality(tier);
     g.renderer.shadowMap.enabled = tier < 3;

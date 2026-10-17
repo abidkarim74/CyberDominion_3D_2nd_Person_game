@@ -201,7 +201,7 @@ try {
       viewport: renderer.getViewport(new THREE.Vector4()).toArray(), scissor: renderer.getScissor(new THREE.Vector4()).toArray(),
       scissorTest: renderer.getScissorTest(), xr: renderer.xr.enabled, shadowAuto: renderer.shadowMap.autoUpdate,
       shadowNeeds: renderer.shadowMap.needsUpdate, car: g.car.visible, person: g.person.root.visible,
-      road: g.reflections.mirror.visible, mirrors: system.mirrors.map(mirror => mirror.surface.visible),
+      road: g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false, mirrors: system.mirrors.map(mirror => mirror.surface.visible),
       rearGeometry: system.rearviewOpening.swaps.map(swap => swap.mesh.geometry.uuid) });
     const before = state(); captureAll(); const after = state();
     renderer.setRenderTarget(null); renderer.setScissorTest(false); sentinel.dispose();

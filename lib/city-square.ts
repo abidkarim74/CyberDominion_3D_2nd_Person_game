@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CITY_SQUARE_HALF_SIZE, PLAYER_SPAWN } from './city-layout';
+import { CITY_SQUARE_HALF_SIZE, PLAYER_SPAWN, ROAD_WIDTH } from './city-layout';
 
 export type CitySquare = {
   update: (elapsed: number, delta: number) => void;
@@ -82,12 +82,6 @@ export function addCitySquare(scene: THREE.Scene): CitySquare {
       ctx.fillStyle = 'rgba(155,198,212,.08)';
       ctx.fillRect(ix * 32 + 2, iz * 32 + 2, 29, .7);
     }
-    // A slightly darker vehicle ribbon reads as a continuous shared-space carriageway.
-    ctx.fillStyle = 'rgba(4,15,26,.33)';
-    for (const lane of [-22, 22]) {
-      ctx.fillRect(world(lane - 9), 0, world(18) - world(0), 2048);
-      ctx.fillRect(0, world(lane - 9), 2048, world(18) - world(0));
-    }
     ctx.lineWidth = 1.3; ctx.strokeStyle = 'rgba(153,191,203,.28)';
     for (let line = -54; line <= 54; line += 9) {
       ctx.beginPath(); ctx.moveTo(world(line), 0); ctx.lineTo(world(line), 2048); ctx.stroke();
@@ -98,7 +92,7 @@ export function addCitySquare(scene: THREE.Scene): CitySquare {
       ctx.strokeStyle = 'rgba(215,179,119,.38)'; ctx.lineWidth = radius === 31.8 ? 3 : 1.5;
       ctx.beginPath(); ctx.arc(1024, 1024, radius / squareSize * 2048, 0, Math.PI * 2); ctx.stroke();
     }
-    // Small brass pin joints and quiet aggregate keep the wet stone from feeling flat.
+    // Small brass pin joints and quiet aggregate keep the stone from feeling flat.
     for (let i = 0; i < 18000; i++) {
       const x = (i * 587 + 11) % 2048; const y = (i * 941 + (i % 17) * 41) % 2048;
       ctx.fillStyle = i % 7 ? 'rgba(185,212,219,.055)' : 'rgba(7,13,20,.2)';
@@ -109,11 +103,25 @@ export function addCitySquare(scene: THREE.Scene): CitySquare {
   });
   const pavingMaterial = new THREE.MeshStandardMaterial({
     color: 0xb1beca, map: paving, emissive: 0x44515a, emissiveMap: paving, emissiveIntensity: .16,
-    roughness: .24, metalness: .49,
+    roughness: .91, metalness: 0, envMapIntensity: .1,
   });
-  const floor = mesh(new THREE.PlaneGeometry(squareSize, squareSize), pavingMaterial, 0, .012, 0);
-  floor.rotation.x = -Math.PI / 2;
-  floor.name = 'Nexus Square / flush polished paving';
+  // Paving occupies the nine pedestrian islands. Leave the four carriageways
+  // open to the same detailed asphalt used throughout the street grid.
+  const halfRoad = ROAD_WIDTH / 2;
+  const islands = [[-CITY_SQUARE_HALF_SIZE, -22 - halfRoad], [-22 + halfRoad, 22 - halfRoad], [22 + halfRoad, CITY_SQUARE_HALF_SIZE]];
+  const floorPositions: number[] = [], floorUvs: number[] = [];
+  for (const [x0, x1] of islands) for (const [z0, z1] of islands) {
+    for (const [x, z] of [[x0, z0], [x0, z1], [x1, z1], [x0, z0], [x1, z1], [x1, z0]]) {
+      floorPositions.push(x, 0, z);
+      floorUvs.push((x + CITY_SQUARE_HALF_SIZE) / squareSize, (CITY_SQUARE_HALF_SIZE - z) / squareSize);
+    }
+  }
+  const floorGeometry = new THREE.BufferGeometry();
+  floorGeometry.setAttribute('position', new THREE.Float32BufferAttribute(floorPositions, 3));
+  floorGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(floorUvs, 2));
+  floorGeometry.computeVertexNormals();
+  const floor = mesh(floorGeometry, pavingMaterial, 0, .012, 0);
+  floor.name = 'Nexus Square / flush stone paving';
 
   // Flush inlaid LEDs delineate islands and arrival bays; nothing on the road is raised.
   for (const x of [-44, 0, 44]) for (const z of [-44, 0, 44]) {

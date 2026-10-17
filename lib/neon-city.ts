@@ -23,11 +23,12 @@ import { AiTraffic, type TrafficMarker } from './ai-traffic';
 import { AiPedestrians } from './ai-pedestrians';
 import { BULLET_SPEED, SHOT_IMPULSE, MINIGUN_SPIN, type GunShot } from './front-miniguns';
 import { projectileHitFraction } from './weapon-ballistics';
-import { addCityDetail, batchArchitecture, cityVisibility, cityEnvironment, poolStreetLights, wetStreetReflection } from './cinematic-city';
+import { addCityDetail, batchArchitecture, cityVisibility, cityEnvironment, poolStreetLights } from './cinematic-city';
 import { NeonBloomPass } from './neon-bloom-pass';
 import { makeHologramTexture } from './cyberpunk-atmosphere';
 import { addSkylineBuilding, makeSkylineStyles, planSkylineBuilding, type FacadeStyle } from './cyberpunk-buildings';
 import { finishNightRoad } from './night-city-surfaces';
+import { createRoadSurfaceTextures } from './road-surface-textures';
 import { screenClock } from './city-screens';
 import { PersonController, type PersonTelemetry, type VehicleBlocker } from './person-controller';
 import { GRAPHICS_PRESETS, isGraphicsQuality, loadGraphicsPreference, recommendGraphicsQuality, saveGraphicsPreference, type GraphicsQuality, type GraphicsStatus } from './graphics-quality';
@@ -108,35 +109,6 @@ function makeGlowTexture() {
   return texture;
 }
 
-function makeRoadTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 512;
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('Canvas textures are unavailable.');
-  const random = rng(78);
-  context.fillStyle = '#666a70';
-  context.fillRect(0, 0, 512, 512);
-  for (let i = 0; i < 5200; i += 1) {
-    const alpha = random() * 0.3;
-    context.fillStyle = random() > 0.46
-      ? `rgba(126,163,183,${alpha})`
-      : `rgba(1,5,12,${alpha + 0.03})`;
-    const size = 1 + random() * 4;
-    context.fillRect(random() * 512, random() * 512, size * 2.4, size * 0.35);
-  }
-  for (let i = 0; i < 45; i += 1) {
-    const y = random() * 512;
-    context.fillStyle = `rgba(88,161,190,${random() * 0.07})`;
-    context.fillRect(0, y, 512, random() * 3 + 0.6);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
-  return texture;
-}
 
 function addTunnel(scene: THREE.Scene, colliders: BuildingCollider[]) {
   const structure = new THREE.Group();
@@ -323,7 +295,6 @@ export class NeonCityGame {
   private readonly steam: ReturnType<typeof addSteam>;
   private readonly environment: THREE.WebGLRenderTarget;
   private readonly island: ReturnType<typeof addIslandEnvironment>;
-  private readonly reflections: ReturnType<typeof wetStreetReflection>;
   private readonly drivingMirrors: ReturnType<typeof createDrivingMirrors>;
   private citySquare!: ReturnType<typeof addCitySquare>;
   private collisionWorld!: ColliderGrid;
@@ -558,7 +529,6 @@ export class NeonCityGame {
       }
     });
     this.island = addIslandEnvironment(this.scene);
-    this.reflections = wetStreetReflection(this.scene);
     this.scene.add(this.car);
     this.steam = addSteam(this.scene);
     this.flying = addFlyingVehicles(this.scene);
@@ -571,7 +541,7 @@ export class NeonCityGame {
     this.person = new PersonController(this.scene, this.cameraCollisionWorld, (x, z) => this.roadSnow.sample(x, z).height,
       this.carRig.body, this.carRig.cockpit.steeringWheel, this.carRig.driverDoor);
     this.person.resetDriving(this.carPosition, this.yaw);
-    this.drivingMirrors = createDrivingMirrors(this.carRig.sideMirrors, [this.car, this.person.root, this.reflections.mirror],
+    this.drivingMirrors = createDrivingMirrors(this.carRig.sideMirrors, [this.car, this.person.root],
       { surface: this.carRig.cockpit.rearviewMirror, anchor: this.carRig.body, occupant: this.person.root,
         beforeCapture: () => this.person.setDriverView(false),
         afterCapture: () => this.person.setDriverView(this.cameraView === 'driver' && this.person.mode === 'driving') });
@@ -721,69 +691,32 @@ export class NeonCityGame {
     cyanMoon.shadow.bias = -.00015;
     this.scene.add(cyanMoon, cyanMoon.target);
 
-    const roadTexture = makeRoadTexture();
-    const acrossTexture = roadTexture.clone();
-    acrossTexture.repeat.set(CITY_SPAN / 22, ROAD_WIDTH / 22);
-    acrossTexture.needsUpdate = true;
-    const alongTexture = roadTexture.clone();
-    alongTexture.repeat.set(ROAD_WIDTH / 22, CITY_SPAN / 22);
-    alongTexture.needsUpdate = true;
-    const wetRoadAcross = new THREE.MeshStandardMaterial({
-      color: 0x3c4147,
-      map: acrossTexture,
-      bumpMap: acrossTexture,
-      bumpScale: .025,
-      metalness: .025,
-      roughness: .72,
-      envMapIntensity: .18,
+    const roadTextures = createRoadSurfaceTextures();
+    const asphalt = new THREE.MeshStandardMaterial({
+      name: 'Road / matte weathered asphalt',
+      color: 0xffffff,
+      map: roadTextures.albedo,
+      bumpMap: roadTextures.relief,
+      roughnessMap: roadTextures.roughness,
+      bumpScale: .013,
+      metalness: 0,
+      roughness: .94,
+      envMapIntensity: .1,
     });
-    const wetRoadAlong = wetRoadAcross.clone();
-    wetRoadAlong.map = alongTexture;
-    wetRoadAlong.bumpMap = alongTexture;
-    this.roadSurfaces.push(finishNightRoad(wetRoadAcross), finishNightRoad(wetRoadAlong));
-    const puddleGeometry = new THREE.CircleGeometry(1, 14);
-    const puddleMaterial = new THREE.MeshStandardMaterial({
-      color: 0x131a21,
-      metalness: .12,
-      roughness: .38,
-      envMapIntensity: 0,
-      transparent: true,
-      opacity: .2,
-      depthWrite: false,
-    });
-    const puddles = new THREE.InstancedMesh(puddleGeometry, puddleMaterial, 180);
-    const puddleRandom = rng(13514);
-    const puddleMatrix = new THREE.Matrix4();
-    for (let i = 0; i < 180; i += 1) {
-      const line = ROAD_COORDS[Math.floor(puddleRandom() * ROAD_COORDS.length)];
-      const across = puddleRandom() > 0.5;
-      const along = -CITY_SPAN / 2 + puddleRandom() * CITY_SPAN;
-      const radius = 0.35 + puddleRandom() * 1.7;
-      puddleMatrix.compose(
-        new THREE.Vector3(
-          across ? along : line + (puddleRandom() - 0.5) * 12,
-          0.022,
-          across ? line + (puddleRandom() - 0.5) * 12 : along,
-        ),
-        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2),
-        new THREE.Vector3(radius * (0.8 + puddleRandom()), radius * 0.35, 1),
-      );
-      puddles.setMatrixAt(i, puddleMatrix);
-    }
-    this.scene.add(puddles);
+    this.roadSurfaces.push(finishNightRoad(asphalt));
 
     const horizontalStreets: THREE.Mesh[] = [];
     for (const road of ROAD_COORDS) {
       const horizontal = new THREE.Mesh(
         new THREE.PlaneGeometry(CITY_SPAN, ROAD_WIDTH),
-        wetRoadAcross,
+        asphalt,
       );
       horizontal.rotation.x = -Math.PI / 2;
       horizontal.position.set(0, 0.008, road);
       horizontalStreets.push(horizontal);
       const vertical = new THREE.Mesh(
         new THREE.PlaneGeometry(ROAD_WIDTH, CITY_SPAN),
-        wetRoadAlong,
+        asphalt,
       );
       vertical.rotation.x = -Math.PI / 2;
       vertical.position.set(road, 0.009, 0);
@@ -1193,7 +1126,6 @@ export class NeonCityGame {
   private updateCamera(delta: number, snap = false) {
     this.camera.up.copy(this.cameraUp);
     if (snap) {
-      this.reflections.invalidate();
       this.drivingMirrors?.invalidate();
       this.shadowPosition.set(Infinity, Infinity, Infinity); this.shadowFrame = 0;
     }
@@ -1417,8 +1349,6 @@ export class NeonCityGame {
     this.bloomPass.setQuality(profile.bloomResolution * (1 - this.qualityLevel * .1));
     this.presentationPass.uniforms.bloomEnabled.value = 1;
     this.bloomPass.setSize(width * this.scenePixelRatio, height * this.scenePixelRatio);
-    this.reflections.setPreset(this.graphicsQuality, this.qualityLevel);
-    this.reflections.invalidate();
     this.drivingMirrors.setPreset(this.graphicsQuality, this.qualityLevel);
     // Retain shadows at every tier; reduce their capture size and refresh rate.
     this.renderer.shadowMap.enabled = true;
@@ -1885,7 +1815,6 @@ export class NeonCityGame {
     this.updateBullets(delta);
     this.updateSmoke(delta);
     this.steam.update(this.elapsed, window.innerHeight * this.scenePixelRatio);
-    this.reflections.update(this.elapsed);
     this.island.update(this.elapsed);
     const graphicsProfile = GRAPHICS_PRESETS[this.graphicsQuality];
     this.updateStreetLights(focus, graphicsProfile.streetLights);
@@ -1963,7 +1892,6 @@ export class NeonCityGame {
     this.environment.dispose();
     this.island.dispose();
     this.keyLight.shadow.map?.dispose();
-    this.reflections.dispose();
     this.drivingMirrors.dispose();
     this.citySquare.dispose();
     for (const pass of this.composer.passes) pass.dispose();

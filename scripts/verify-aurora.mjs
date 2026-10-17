@@ -34,7 +34,7 @@ try {
     cancelAnimationFrame(g.animationFrame);
     const sky = g.scene.getObjectByName('Island / blue hour sky and marine haze');
     const isolated = new g.scene.constructor();
-    const target = new (g.reflections.mirror.getRenderTarget().constructor)(512, 256);
+    const target = new (g.composer.readBuffer.constructor)(512, 256);
     const camera = new g.camera.constructor(66, 2, .1, 6500);
     camera.position.set(22, 5, 390); camera.lookAt(22, 175, 1390);
     const oldTime = aurora.uniforms.auroraTime.value, oldDetail = aurora.uniforms.auroraDetail.value;

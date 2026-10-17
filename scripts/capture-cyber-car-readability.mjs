@@ -16,7 +16,7 @@ try {
     const g = document.querySelector('canvas').__drive;
     g.reset(); g.active = false;
     cancelAnimationFrame(g.animationFrame);
-    g.qualityLevel = 0; g.qualityTimer = 0; g.reflections.setQuality(0); g.renderer.shadowMap.enabled = true; g.resize();
+    g.qualityLevel = 0; g.qualityTimer = 0; g.renderer.shadowMap.enabled = true; g.resize();
     g.carRig.body.position.y = 0; g.carRig.body.rotation.set(0, 0, 0);
   });
   await page.addStyleTag({ content: '.drive-hud,.city-minimap,.camera-toggle,.car-inspect-help,.city-ident{display:none !important}' });

@@ -158,12 +158,13 @@ try {
     const g=document.querySelector('canvas').__drive;
     g.qualityLevel=0;g.resize();
     const baselineSceneRatio=g.composer.readBuffer.width/innerWidth;
-    g.qualityLevel=4;g.reflections.setQuality(4);g.renderer.shadowMap.enabled=false;g.resize();
+    g.qualityLevel=4;g.renderer.shadowMap.enabled=false;g.resize();
     g.updateCityVisibility(g.carPosition,4);g.scene.updateMatrixWorld(true);g.renderer.info.reset();g.composer.render();
-    return {baselineSceneRatio,pixelRatio:g.renderer.getPixelRatio(),scenePixelRatio:g.composer.readBuffer.width/innerWidth,bloom:g.bloomPass.enabled,reflection:g.reflections.mirror.visible,
+    return {baselineSceneRatio,pixelRatio:g.renderer.getPixelRatio(),scenePixelRatio:g.composer.readBuffer.width/innerWidth,bloom:g.bloomPass.enabled,reflection:g.scene.getObjectByName('Road / wet asphalt reflections')?.visible ?? false,
       shadows:g.renderer.shadowMap.enabled,contextLost:g.renderer.getContext().isContextLost(),calls:g.renderer.info.render.calls};
   });
-  assert.ok(fallback.scenePixelRatio>.3&&fallback.scenePixelRatio<fallback.baselineSceneRatio&&fallback.pixelRatio>=fallback.scenePixelRatio&&fallback.bloom&&fallback.reflection&&fallback.shadows&&!fallback.contextLost&&fallback.calls>50,'Lower effects tiers reduce scene resolution while retaining reconstruction, glow, reflections and shadows');
+  assert.ok(fallback.scenePixelRatio>.3&&fallback.scenePixelRatio<fallback.baselineSceneRatio&&fallback.pixelRatio>=fallback.scenePixelRatio&&fallback.bloom&&fallback.shadows&&!fallback.contextLost&&fallback.calls>50,'Lower effects tiers reduce scene resolution while retaining reconstruction, glow and shadows');
+  assert.equal(fallback.reflection,false,'Matte roads have no wet-road mirror at the fallback tier');
   await capture('performance-fallback');
   assert.deepEqual(errors,[],'No browser, shader or audio errors');
   const report={setup,rates,alignment,ballistics,audio:{idle:idleAudio,firing:firingAudio},firing,released,cooled,driving,reset,pools,fallback,errors};

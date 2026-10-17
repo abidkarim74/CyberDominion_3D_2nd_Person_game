@@ -59,7 +59,7 @@ try {
       // Same camera, speed and tier isolate the effect's cost from nitro's FOV
       // change and the different city blocks visible during a moving drive.
       g.qualityLevel = 2; g.qualityWarmup = Infinity;
-      g.reflections.setQuality(2); g.renderer.shadowMap.enabled = false; g.resize();
+      g.renderer.shadowMap.enabled = false; g.resize();
       g.active = false;
       g.updateSnow(0); g.updateCityVisibility(g.carPosition, 2);
       g.updateCamera(0, true); g.scene.updateMatrixWorld(true);

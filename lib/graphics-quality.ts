@@ -11,8 +11,6 @@ export type GraphicsPreset = {
   renderScale: number;
   shadowSize: number;
   shadowInterval: number;
-  reflectionSize: number;
-  reflectionCadence: number;
   bloomResolution: number;
   bloomStrength: number;
   anisotropy: number;
@@ -26,36 +24,36 @@ export const GRAPHICS_PRESETS: Record<GraphicsQuality, GraphicsPreset> = {
   low: {
     label: 'Low', computer: 'Older PCs / basic laptops',
     description: 'A cleaner, brighter night with a lightweight rendering budget.',
-    features: ['Improved edge clarity', 'Wet-road highlights', 'Light winter atmosphere'],
+    features: ['Improved edge clarity', 'Matte asphalt', 'Light winter atmosphere'],
     pixelBudget: 600_000, maxPixelRatio: .85, renderScale: .72,
-    shadowSize: 512, shadowInterval: 16, reflectionSize: 192, reflectionCadence: 18,
+    shadowSize: 512, shadowInterval: 16,
     bloomResolution: .6, bloomStrength: .31, anisotropy: 4,
     streetLights: 2, snowDensity: .3, detailScale: .7,
   },
   medium: {
     label: 'Medium', computer: 'Modern PCs / capable integrated graphics',
     description: 'The previous High quality, with crisp city detail and rich neon.',
-    features: ['Full-resolution clarity', 'Detailed shadows', 'Rich street reflections', 'Layered northern lights'],
+    features: ['Full-resolution clarity', 'Detailed shadows', 'Weathered road surfaces', 'Layered northern lights'],
     pixelBudget: 2_500_000, maxPixelRatio: 1.5, renderScale: 1,
-    shadowSize: 1536, shadowInterval: 4, reflectionSize: 512, reflectionCadence: 4,
+    shadowSize: 1536, shadowInterval: 4,
     bloomResolution: 1, bloomStrength: .44, anisotropy: 8,
     streetLights: 6, snowDensity: .8, detailScale: 1,
   },
   high: {
     label: 'High', computer: 'Gaming laptops / dedicated graphics',
     description: 'Finer surfaces, deeper lighting and beautifully resolved city silhouettes.',
-    features: ['Enhanced scene clarity', '2K soft shadows', 'Detailed wet asphalt', 'Cinematic neon color', 'Extended city detail'],
+    features: ['Enhanced scene clarity', '2K soft shadows', 'Detailed asphalt', 'Cinematic neon color', 'Extended city detail'],
     pixelBudget: 3_300_000, maxPixelRatio: 1.65, renderScale: 1.08,
-    shadowSize: 2048, shadowInterval: 4, reflectionSize: 768, reflectionCadence: 4,
+    shadowSize: 2048, shadowInterval: 4,
     bloomResolution: 1.25, bloomStrength: .45, anisotropy: 12,
     streetLights: 7, snowDensity: .9, detailScale: 1.15,
   },
   ultra: {
     label: 'Ultra', computer: 'High-end gaming PCs',
-    description: 'A luminous winter city with polished reflections, delicate glow and cinematic depth.',
-    features: ['Supersampled clarity', 'Focused 2K soft shadows', 'Live 1K reflections', 'Precision HDR neon', 'Sculpted winter surfaces', 'Full city atmosphere'],
+    description: 'A luminous winter city with textured streets, delicate glow and cinematic depth.',
+    features: ['Supersampled clarity', 'Focused 2K soft shadows', 'Detailed asphalt aggregate', 'Precision HDR neon', 'Sculpted winter surfaces', 'Full city atmosphere'],
     pixelBudget: 4_800_000, maxPixelRatio: 1.85, renderScale: 1.35,
-    shadowSize: 2048, shadowInterval: 3, reflectionSize: 1024, reflectionCadence: 3,
+    shadowSize: 2048, shadowInterval: 3,
     bloomResolution: 1.6, bloomStrength: .47, anisotropy: 16,
     streetLights: 8, snowDensity: 1, detailScale: 1.3,
   },

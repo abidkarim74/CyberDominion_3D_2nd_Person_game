@@ -134,7 +134,6 @@ try {
       game.carPosition.set(game.camera.position.x, .015, game.camera.position.z);
       game.updateCityVisibility(game.carPosition);
       game.renderer.shadowMap.needsUpdate = false;
-      game.reflections.invalidate();
       game.composer.render(); game.composer.render();
     }, { candidate: scene.candidates[kind] });
     const clockBefore = await page.evaluate(() => document.querySelector('canvas').__drive.scene.userData.cityScreenClock.value);

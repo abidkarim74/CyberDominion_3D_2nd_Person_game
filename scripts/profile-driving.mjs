@@ -13,8 +13,6 @@ try {
       a.sort((a,b)=>a-b);return {ms:a[32],calls:g.renderer.info.render.calls,triangles:g.renderer.info.render.triangles};
     }
     output.full = await measure();
-    g.reflections.mirror.visible=false;output.noReflection=await measure();
-    g.reflections.mirror.visible=true;
     g.composer.passes[1].enabled=false;output.noBloom=await measure();g.composer.passes[1].enabled=true;
     g.renderer.setPixelRatio(.75);g.resize();output.lowerResolution=await measure();
     return output;
