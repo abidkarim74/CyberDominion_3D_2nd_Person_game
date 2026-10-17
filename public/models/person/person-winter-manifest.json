@@ -1,21 +1,21 @@
 {
-  "name": "Winter driver / detailed insulated civilian outfit",
+  "name": "Winter driver / pearl futuristic insulated suit",
   "url": "/models/person/person-winter.glb",
   "sourceBlend": "artifacts/blender/person.blend",
   "sourceSHA256": "0d44071b9fe0adae7fa3abe7cbf8bb71f92665d0e2c7f2a02a52850f91b89a36",
   "editableWinterBlend": "artifacts/blender/person-winter.blend",
   "standingHeightMeters": 1.8,
-  "wardrobeHeightMeters": 1.80175859114388,
+  "wardrobeHeightMeters": 1.8000338711426593,
   "idleBounds": {
     "min": [
       -0.26700595021247864,
-      -0.21871809661388397,
+      -0.21236620843410492,
       -3.379961708560586e-05
     ],
     "max": [
       0.2600692808628082,
       0.1875525861978531,
-      1.8017247915267944
+      1.8000000715255737
     ]
   },
   "forward": "+Z",
@@ -124,13 +124,13 @@
         "frame": 0,
         "min": [
           -0.26700595021247864,
-          -0.21871809661388397,
+          -0.21236620843410492,
           -3.379961708560586e-05
         ],
         "max": [
           0.2600692808628082,
           0.1875525861978531,
-          1.8017247915267944
+          1.8000000715255737
         ],
         "pelvis": [
           -0.0017576917307451367,
@@ -147,8 +147,8 @@
         ],
         "max": [
           0.7052574157714844,
-          0.18093332648277283,
-          1.7823126316070557
+          0.17360422015190125,
+          1.7814875841140747
         ],
         "pelvis": [
           -0.0017572665819898248,
@@ -165,8 +165,8 @@
         ],
         "max": [
           0.2809111475944519,
-          0.2175048291683197,
-          1.7927199602127075
+          0.216648131608963,
+          1.7910563945770264
         ],
         "pelvis": [
           -1.1641532182693481e-10,
@@ -185,8 +185,8 @@
         ],
         "max": [
           0.2809111475944519,
-          0.2175048291683197,
-          1.7927199602127075
+          0.216648131608963,
+          1.7910563945770264
         ],
         "pelvis": [
           -1.1641532182693481e-10,
@@ -203,8 +203,8 @@
         ],
         "max": [
           0.7038598656654358,
-          0.18096527457237244,
-          1.7822089195251465
+          0.1736094355583191,
+          1.7813717126846313
         ],
         "pelvis": [
           -0.0017542841378599405,
@@ -216,13 +216,13 @@
         "frame": 39,
         "min": [
           -0.26700595021247864,
-          -0.21871809661388397,
+          -0.21236620843410492,
           -3.379961708560586e-05
         ],
         "max": [
           0.2600692808628082,
           0.1875525861978531,
-          1.8017247915267944
+          1.8000000715255737
         ],
         "pelvis": [
           -0.0017576917307451367,
@@ -236,13 +236,13 @@
         "frame": 0,
         "min": [
           -0.26700595021247864,
-          -0.21871809661388397,
+          -0.21236620843410492,
           -3.379961708560586e-05
         ],
         "max": [
           0.2600692808628082,
           0.1875525861978531,
-          1.8017247915267944
+          1.8000000715255737
         ],
         "pelvis": [
           -0.0017576917307451367,
@@ -254,13 +254,13 @@
         "frame": 120,
         "min": [
           -0.26700595021247864,
-          -0.21871809661388397,
+          -0.21236620843410492,
           -3.379961708560586e-05
         ],
         "max": [
           0.2600692808628082,
           0.1875525861978531,
-          1.8017247915267944
+          1.8000000715255737
         ],
         "pelvis": [
           -0.0017576917307451367,
@@ -272,13 +272,13 @@
         "frame": 240,
         "min": [
           -0.26700595021247864,
-          -0.21871809661388397,
+          -0.21236620843410492,
           -3.379961708560586e-05
         ],
         "max": [
           0.2600692808628082,
           0.1875525861978531,
-          1.8017247915267944
+          1.8000000715255737
         ],
         "pelvis": [
           -0.0017576917307451367,
@@ -298,7 +298,7 @@
         "max": [
           0.3508511483669281,
           0.26014021039009094,
-          1.7566152811050415
+          1.7419698238372803
         ],
         "pelvis": [
           -0.0017576917307451367,
@@ -316,7 +316,7 @@
         "max": [
           0.31559064984321594,
           0.25042691826820374,
-          1.769978404045105
+          1.7566272020339966
         ],
         "pelvis": [
           -0.0017576917307451367,
@@ -334,7 +334,7 @@
         "max": [
           0.35085001587867737,
           0.26014021039009094,
-          1.7566152811050415
+          1.7419698238372803
         ],
         "pelvis": [
           -0.0017576917307451367,
@@ -353,8 +353,8 @@
         ],
         "max": [
           0.2809111475944519,
-          0.2175048291683197,
-          1.7927199602127075
+          0.216648131608963,
+          1.7910563945770264
         ],
         "pelvis": [
           -1.1641532182693481e-10,
@@ -371,8 +371,8 @@
         ],
         "max": [
           0.2809111475944519,
-          0.2175048291683197,
-          1.7927199602127075
+          0.216648131608963,
+          1.7910563945770264
         ],
         "pelvis": [
           -1.1641532182693481e-10,
@@ -389,8 +389,8 @@
         ],
         "max": [
           0.2809111475944519,
-          0.2175048291683197,
-          1.7927199602127075
+          0.216648131608963,
+          1.7910563945770264
         ],
         "pelvis": [
           -1.1641532182693481e-10,
@@ -409,8 +409,8 @@
         ],
         "max": [
           0.3392987847328186,
-          0.16980545222759247,
-          1.8015820980072021
+          0.16868574917316437,
+          1.785994291305542
         ],
         "pelvis": [
           -0.0017576917307451367,
@@ -428,7 +428,7 @@
         "max": [
           0.308147132396698,
           0.2116502821445465,
-          1.7922850847244263
+          1.7812172174453735
         ],
         "pelvis": [
           -0.0017576917307451367,
@@ -445,8 +445,8 @@
         ],
         "max": [
           0.3392990529537201,
-          0.16980545222759247,
-          1.8015824556350708
+          0.16868574917316437,
+          1.7859947681427002
         ],
         "pelvis": [
           -0.0017576917307451367,
@@ -456,43 +456,52 @@
       }
     ]
   },
-  "meshes": 15,
+  "meshes": 17,
   "materials": [
     "Eyelashmat",
     "Bodymat",
-    "PlayerWinter_Scarf",
     "PlayerWinter_Gloves",
+    "PlayerWinter_Panels",
     "PlayerWinter_Hardware",
-    "PlayerWinter_Beanie",
-    "PlayerWinter_Coat",
     "PlayerWinter_Seams",
+    "PlayerWinter_Accent",
     "Hairmat",
+    "PlayerWinter_Coat",
     "PlayerWinter_Reflective",
+    "PlayerWinter_Liner",
     "PlayerWinter_Cuffs",
     "PlayerWinter_Boots",
     "PlayerWinter_Trousers"
   ],
-  "textures": 14,
-  "vertices": 24699,
-  "triangles": 41442,
-  "glbBytes": 3086916,
-  "sha256": "6a7a7e2f275fe3430067c2b82f995bc0d3c9239aedc1989f498c40201fe68c92",
+  "textures": 13,
+  "vertices": 25431,
+  "triangles": 42330,
+  "glbBytes": 3071732,
+  "sha256": "7de7d77b43815ba8baec8e18e0aadd1ea951a9e0eefe05504e776a6960d18381",
   "previewImages": [
     "person-winter-fullbody.png",
     "person-winter-closeup.png",
     "person-winter-seated.png"
   ],
+  "headwear": "none",
+  "noHat": true,
+  "originalHairPreserved": true,
+  "originalFullHairstylePreserved": true,
+  "originalHairVertexCount": 3772,
+  "originalHairPolygonCount": 2334,
+  "originalHairPositionsSHA256": "f38b08b56405c75cc43e3585739929aa0d04d7b6eb4d93d87105e6701aed4ea7",
   "details": [
-    "shallow quilt baffles and seam piping",
-    "fine woven cloth and wool knit textures",
+    "pearl-white insulated quilted suit jacket and silver lined trousers",
+    "original full hairstyle, face and head visible",
+    "fine woven cloth and rib knit thermal liner textures",
+    "pale silver articulated chest and forearm panels",
+    "restrained ice-cyan emissive inlays and tiny 07 insignia",
     "fitted folded hood and high collar",
-    "muted amber scarf with folded tail",
-    "beanie folded cuff with raised ribs",
-    "articulated gloves retain all finger skinning",
+    "articulated graphite gloves retain all finger skinning",
     "handwarmer pocket zips and edge stitching",
     "zipper pull hardware",
     "small reflective shoulder tabs",
-    "substantial lug sole boots with ankle bands"
+    "substantial lug sole high-top boots retaining source laces/tread"
   ],
   "preservedOriginalSkeletonAndSixActions": true
 }

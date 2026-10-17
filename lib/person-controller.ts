@@ -114,7 +114,7 @@ export class PersonController {
   private readonly diagnosticState: {
     asset: string; animations: string[]; height: number; scale: number; meshes: number; triangles: number;
     collisionRadius: number; transitionSeconds: number; loadingError?: string;
-  } = { asset: '/models/person/person-winter.glb?v=winter-outfit-v1', animations: [], height: 0, scale: PERSON_SCALE, meshes: 0,
+  } = { asset: '/models/person/person-winter.glb?v=winter-outfit-v2', animations: [], height: 0, scale: PERSON_SCALE, meshes: 0,
     triangles: 0, collisionRadius: RADIUS, transitionSeconds: TRANSITION_SECONDS };
   private readonly ankleFloor = (ankle: THREE.Vector3) => {
     if (this.mode === 'driving' && this.cabin) {
@@ -135,7 +135,7 @@ export class PersonController {
     private readonly getGroundHeight: (x: number, z: number) => number,
     private readonly cabin?: THREE.Object3D,
     private readonly steeringWheel?: THREE.Object3D) {
-    this.root.name = 'Player / detailed winter-clothed person';
+    this.root.name = 'Player / futuristic winter suit';
     this.root.rotation.order = 'YXZ';
     this.root.userData.dynamic = true;
     this.root.visible = false;

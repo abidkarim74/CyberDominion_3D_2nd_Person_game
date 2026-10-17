@@ -28,7 +28,7 @@ try {
     // Read the actual headliner triangles after architecture batching. Only its
     // leather upper surfaces can intersect a vertical ray above the seated head.
     g.carRig.body.traverse(mesh => {
-      if (!mesh.isMesh || !mesh.material?.name?.includes('fine grained anthracite leather')) return;
+      if (!mesh.isMesh || !/fine grained (?:anthracite|black) leather/.test(mesh.material?.name ?? '')) return;
       const position = mesh.geometry.attributes.position, index = mesh.geometry.index;
       const matrix = inverse.clone().multiply(mesh.matrixWorld);
       for (let i = 0; i < (index?.count ?? position.count); i += 3) {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { chromium } from '@playwright/test';
 
@@ -14,6 +15,7 @@ const glbJson = async path => {
 };
 const original = await glbJson('public/models/person/person.glb');
 const winter = await glbJson('public/models/person/person-winter.glb');
+const winterSha256 = createHash('sha256').update(await readFile('public/models/person/person-winter.glb')).digest('hex');
 const manifest = JSON.parse(await readFile('public/models/person/person-winter-manifest.json', 'utf8'));
 const expectedClips = ['EnterCar', 'ExitCar', 'Idle', 'Run', 'Seated', 'Walk'];
 assert.deepEqual(winter.animations.map(clip => clip.name).sort(), expectedClips, 'All six authored animation clips ship in the winter GLB');
@@ -24,11 +26,27 @@ for (const clip of original.animations) {
 }
 const jointNames = gltf => [...new Set(gltf.skins.flatMap(skin => skin.joints.map(index => gltf.nodes[index].name)))].sort();
 assert.deepEqual(jointNames(winter), jointNames(original), 'Winter clothes retain the complete original articulated skeleton');
+assert.ok(![...winter.materials, ...winter.meshes, ...winter.nodes].some(part => /beanie|knit cap|wool cap|winter hat/i.test(part.name ?? '')),
+  'The shipped outfit has no hat geometry or hat material');
+const hairGeometry = gltf => gltf.meshes.flatMap(mesh => mesh.primitives
+  .filter(primitive => /hair/i.test(gltf.materials[primitive.material]?.name ?? ''))
+  .map(primitive => {
+    const position = gltf.accessors[primitive.attributes.POSITION];
+    return { vertices: position.count, min: position.min, max: position.max };
+  }));
+const sourceHair = hairGeometry(original), retainedHair = hairGeometry(winter);
+assert.ok(sourceHair.length > 0 && retainedHair.length === sourceHair.length, 'The original hairstyle is present in the winter GLB');
+for (let index = 0; index < sourceHair.length; index++) {
+  assert.equal(retainedHair[index].vertices, sourceHair[index].vertices, 'The original hair geometry keeps every authored vertex');
+  for (const bound of ['min', 'max']) for (let axis = 0; axis < 3; axis++)
+    assert.ok(Math.abs(retainedHair[index][bound][axis] - sourceHair[index][bound][axis]) < .001,
+      'The hairstyle retains its original untrimmed bounds');
+}
 const winterMaterials = winter.materials.filter(material => /winter/i.test(material.name));
 assert.ok(winterMaterials.length >= 6, 'The outfit contains distinct authored winter materials');
 assert.ok(winterMaterials.filter(material => material.pbrMetallicRoughness?.baseColorTexture).length >= 4,
   'Detailed winter fabrics have embedded surface textures');
-report.glb = { clips: expectedClips, bones: jointNames(winter).length, winterMaterials: winterMaterials.map(material => material.name),
+report.glb = { sha256: winterSha256, clips: expectedClips, bones: jointNames(winter).length, sourceHair, retainedHair, winterMaterials: winterMaterials.map(material => material.name),
   textures: winter.images?.length ?? 0, manifest };
 
 const browser = await chromium.launch({ channel: 'chrome', headless: true,
@@ -59,6 +77,21 @@ try {
     const winterMesh = mesh => /winter/i.test(label(mesh));
     const meshes = [];
     p.root.traverse(mesh => { if (mesh.isSkinnedMesh) meshes.push(mesh); });
+    const textureLightness = material => {
+      if (!material.map?.image) return null;
+      const canvas = document.createElement('canvas'); canvas.width = 96; canvas.height = 96;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(material.map.image, 0, 0, canvas.width, canvas.height);
+      const data = context.getImageData(0, 0, canvas.width, canvas.height).data, luminances = [];
+      for (let index = 0; index < data.length; index += 4) {
+        const luma = (.2126 * data[index] + .7152 * data[index + 1] + .0722 * data[index + 2]) / 255;
+        if (luma > .04) luminances.push(luma);
+      }
+      luminances.sort((a, b) => a - b);
+      return { upperQuartile: luminances[Math.floor(luminances.length * .75)] ?? 0,
+        percentile90: luminances[Math.floor(luminances.length * .9)] ?? 0,
+        lightFraction: luminances.filter(luma => luma > .48).length / Math.max(1, luminances.length) };
+    };
     const weight = (mesh, vertex, pattern) => {
       const joints = mesh.geometry.attributes.skinIndex, weights = mesh.geometry.attributes.skinWeight;
       let sum = 0;
@@ -73,7 +106,7 @@ try {
       const selected = { parka: [], gloves: [], boots: [] };
       for (let vertex = 0; vertex < mesh.geometry.attributes.position.count; vertex++) {
         if (/coat|parka/i.test(label(mesh))) selected.parka.push(vertex);
-        if (weight(mesh, vertex, /(?:Left|Right)Hand/) > .5) selected.gloves.push(vertex);
+        if (/glove/i.test(label(mesh)) && weight(mesh, vertex, /(?:Left|Right)Hand/) > .5) selected.gloves.push(vertex);
         if (weight(mesh, vertex, /(?:Left|Right)(?:Foot|Toe)/) > .5) selected.boots.push(vertex);
       }
       for (const role of Object.keys(roles)) if (selected[role].length) {
@@ -108,7 +141,8 @@ try {
         triangles: (mesh.geometry.index?.count ?? mesh.geometry.attributes.position.count) / 3,
         bones: mesh.skeleton.bones.length,
         materials: materials(mesh).map(material => ({ name: material.name, color: material.color?.getHexString(),
-          textured: !!material.map, width: material.map?.image?.width, height: material.map?.image?.height })) })),
+          textured: !!material.map, width: material.map?.image?.width, height: material.map?.image?.height,
+          textureLightness: textureLightness(material), rgb: material.color?.toArray(), emissive: material.emissive?.toArray() })) })),
       advance(seconds) {
         const samples = [];
         cancelAnimationFrame(g.animationFrame);
@@ -141,7 +175,7 @@ try {
         for (const mesh of meshes.filter(winterMesh)) {
           if (role === 'parka' && /coat|parka/i.test(label(mesh))) {
             changed.push({ mesh, visible: mesh.visible }); mesh.visible = false;
-          } else if (role === 'gloves') {
+          } else if (role === 'gloves' && /glove/i.test(label(mesh))) {
             const source = mesh.geometry, index = source.index;
             if (!index) continue;
             const retained = [];
@@ -181,6 +215,23 @@ try {
             triangles: mesh.visible ? (index?.count ?? 0) / 3 : 0, headTriangles };
         });
       },
+      hairInfo: () => meshes.filter(mesh => materials(mesh).some(material => /hair/i.test(material.name)))
+        .map(mesh => ({ name: mesh.name, visible: mesh.visible,
+          vertices: mesh.geometry.attributes.position.count,
+          triangles: mesh.visible ? (mesh.geometry.index?.count ?? mesh.geometry.attributes.position.count) / 3 : 0 })),
+      bootGrounding() {
+        g.scene.updateMatrixWorld(true);
+        let minimum = Infinity, vertices = 0;
+        for (const mesh of meshes.filter(mesh => winterMesh(mesh) && /boot/i.test(label(mesh)))) {
+          mesh.skeleton.update();
+          for (let vertex = 0; vertex < mesh.geometry.attributes.position.count; vertex++) {
+            if (weight(mesh, vertex, /(?:Left|Right)(?:Foot|Toe)/) <= .5) continue;
+            mesh.getVertexPosition(vertex, point).applyMatrix4(mesh.matrixWorld);
+            minimum = Math.min(minimum, point.y - p.getGroundHeight(point.x, point.z)); vertices++;
+          }
+        }
+        return { mode: p.mode, poseTime: p.activeAction?.time, minimum, vertices };
+      },
     };
   });
   const advance = seconds => page.evaluate(seconds => window.__winterCheck.advance(seconds), seconds);
@@ -199,15 +250,26 @@ try {
   report.asset = await page.evaluate(() => ({ ...document.querySelector('canvas').__drive.person.diagnostics,
     meshes: window.__winterCheck.meshInfo() }));
   assert.equal(report.asset.ready, true, report.asset.loadingError || 'Winter player loads');
-  assert.match(report.asset.asset, /person-winter\.glb\?v=winter-outfit-v1/, 'The game loads the shipped winter model');
+  assert.match(report.asset.asset, /person-winter\.glb\?v=winter-outfit-v2/, 'The game loads the shipped hat-free futuristic winter model');
   assert.ok(Math.abs(report.asset.scale - .92 * .92) < 1e-6, 'Clothing preserves the fitted anatomical rig scale');
   assert.ok(report.asset.height > 1.45 && report.asset.height < 1.75, 'Measured dressed player retains the cabin-sized proportions');
   const winterMeshes = report.asset.meshes.filter(mesh => mesh.winter);
-  for (const part of ['coat|parka', 'trouser', 'boot', 'scarf', 'beanie', 'cuff', 'seam', 'hardware'])
+  for (const part of ['coat|parka', 'trouser', 'boot', 'cuff', 'seam|panel', 'hardware'])
     assert.ok(winterMeshes.some(mesh => new RegExp(part, 'i').test(mesh.label)), `${part} detail is present in the loaded outfit`);
   assert.ok(winterMeshes.filter(mesh => mesh.materials.some(material => material.textured && material.width >= 128)).length >= 4,
     'Fabric maps upload correctly for the rendered winter outfit');
   assert.ok(winterMeshes.every(mesh => mesh.bones >= 20), 'Winter garments are skinned to the articulated rig');
+  const coat = winterMeshes.filter(mesh => /coat|parka/i.test(mesh.label)).flatMap(mesh => mesh.materials);
+  assert.ok(coat.some(material => material.textureLightness?.percentile90 > .48),
+    'The rendered suit fabric contains the requested light pearl surface colors');
+  assert.ok(winterMeshes.flatMap(mesh => mesh.materials).some(material => {
+    const color = material.rgb, emission = material.emissive;
+    return (color && color[1] > color[0] * 1.3 && color[2] > color[0] * 1.3 && color[2] > .2) ||
+      (emission && emission[1] > emission[0] * 1.3 && emission[2] > emission[0] * 1.3 && emission[2] > .01);
+  }), 'Technical winter-suit details include the subtle cyan accent color');
+  report.checks.exteriorHair = await page.evaluate(() => window.__winterCheck.hairInfo());
+  assert.ok(report.checks.exteriorHair.length > 0 && report.checks.exteriorHair.every(mesh => mesh.visible && mesh.triangles > 0),
+    'The complete original hairstyle is visible in the exterior view');
   const before = await advance(.2);
   for (const role of ['parka', 'gloves', 'boots'])
     assert.ok(before.at(-1).clothes[role].length >= 30, `Actual skinned ${role} vertices are tracked`);
@@ -222,7 +284,20 @@ try {
   assert.ok(exit.some(sample => sample.doorOpenAmount > .98), 'The fitted winter player exits through the animated open door');
   assert.ok(exit.some(sample => /exit/i.test(sample.clip)), 'The winter player uses the authored exit animation');
   assert.equal(exit.at(-1).doorOpenAmount, 0, 'The door closes after exit');
-  const outside = { position: exit.at(-1).position, yaw: exit.at(-1).yaw };
+  // The reversible seat transfer blends to standing Idle for .32s. Measure
+  // grounding once that blend has settled, then review a complete idle beat.
+  await advance(.5);
+  report.checks.settledIdleBootGrounding = await page.evaluate(() => {
+    const samples = [];
+    for (let frame = 0; frame < 6; frame++) {
+      window.__winterCheck.advance(.1); samples.push(window.__winterCheck.bootGrounding());
+    }
+    return samples;
+  });
+  assert.ok(report.checks.settledIdleBootGrounding.every(sample => sample.vertices > 100 && sample.minimum >= -.01),
+    'Settled idle boot soles remain within one centimetre of the real ground surface');
+  const standing = await snapshot();
+  const outside = { position: standing.position, yaw: standing.yaw };
   for (const [name, camera, target] of [
     ['front', [0, 1.06, 2.55], [0, .82, 0]],
     ['back', [0, 1.12, -2.55], [0, .82, 0]],
@@ -280,6 +355,7 @@ try {
     const g = document.querySelector('canvas').__drive;
     return { view: g.cameraView, visibility: g.person.diagnostics.driverVisibility,
       headwear: window.__winterCheck.headTriangles(),
+      hair: window.__winterCheck.hairInfo(),
       gloves: window.__winterCheck.visiblePixels('gloves'), parka: window.__winterCheck.visiblePixels('parka'),
       contextLost: g.renderer.getContext().isContextLost() };
   });
@@ -288,8 +364,8 @@ try {
   assert.equal(firstPerson.visibility.driverView, true);
   assert.ok(firstPerson.headwear.every(mesh => mesh.headTriangles === 0),
     'All head and neck weighted winter triangles are cleared away from the cockpit camera');
-  assert.ok(firstPerson.headwear.filter(mesh => /beanie/i.test(mesh.label)).every(mesh => mesh.triangles === 0),
-    'The winter cap cannot surround or obstruct the cockpit camera');
+  assert.ok(firstPerson.hair.length > 0 && firstPerson.hair.every(mesh => mesh.triangles === 0),
+    'The preserved original hairstyle clears the first-person camera volume');
   assert.ok(firstPerson.gloves.lowerPixels > 80, 'Textured articulated winter gloves are visible at the wheel');
   assert.ok(firstPerson.parka.lowerPixels > 80, 'The padded winter torso and sleeves remain visible in first person');
   assert.equal(firstPerson.contextLost, false, 'Winter materials render without a lost WebGL context');
@@ -299,12 +375,13 @@ try {
   report.checks.restoredOutfit = await page.evaluate(() => ({
     visibility: document.querySelector('canvas').__drive.person.diagnostics.driverVisibility,
     meshes: window.__winterCheck.headTriangles(),
+    hair: window.__winterCheck.hairInfo(),
   }));
   assert.equal(report.checks.restoredOutfit.visibility.driverView, false);
-  assert.ok(report.checks.restoredOutfit.meshes.some(mesh => /beanie/i.test(mesh.label) && mesh.triangles > 0),
-    'The complete beanie is restored outside first person');
-  assert.ok(report.checks.restoredOutfit.meshes.some(mesh => /scarf/i.test(mesh.label) && mesh.triangles > 0),
-    'The detailed scarf is restored outside first person');
+  assert.ok(report.checks.restoredOutfit.hair.length > 0 && report.checks.restoredOutfit.hair.every(mesh => mesh.visible && mesh.triangles > 0),
+    'The complete original hairstyle is restored after cockpit view');
+  const scarves = report.checks.restoredOutfit.meshes.filter(mesh => /scarf/i.test(mesh.label));
+  assert.ok(scarves.every(mesh => mesh.triangles > 0), 'Any silver winter scarf is restored outside first person');
   assert.deepEqual(errors, [], 'No browser, loader or shader errors during the winter outfit checks');
   report.runtimeErrors = errors; report.passed = true;
   console.log('Winter player asset, clothing animation, entry/exit, and first-person visibility checks passed');

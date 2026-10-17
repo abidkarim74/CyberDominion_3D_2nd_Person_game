@@ -9,6 +9,7 @@ import ast, hashlib, json, struct, sys
 import bpy, bmesh
 import numpy as np
 from mathutils import Vector, Matrix
+from mathutils.bvhtree import BVHTree
 
 ROOT=Path(__file__).resolve().parent.parent
 OUT=ROOT/'artifacts'/'blender'; WEB=ROOT/'public'/'models'/'person'
@@ -66,11 +67,15 @@ def material(name,color,roughness=.86,metallic=0):
         m.node_tree.links.new(n.outputs['Color'],nm.inputs['Color']);m.node_tree.links.new(nm.outputs['Normal'],p.inputs['Normal'])
     return m
 
-palette={'Coat':(.25,.34,.45),'Trousers':(.26,.28,.32),'Boots':(.030,.036,.045),
-         'Scarf':(.47,.29,.125),'Beanie':(.19,.22,.25),'Cuffs':(.080,.095,.12),
-         'Seams':(.028,.043,.063),'Reflective':(.27,.34,.40),'Hardware':(.16,.19,.23)}
+palette={'Coat':(.88,.91,.94),'Trousers':(.69,.76,.83),'Boots':(.030,.036,.045),
+         'Scarf':(.51,.58,.64),'Cuffs':(.080,.095,.12),'Panels':(.48,.60,.70),
+         'Seams':(.15,.22,.28),'Reflective':(.62,.76,.83),'Hardware':(.37,.45,.51),
+         'Accent':(.07,.53,.73)}
 mats={k:material(k,c,.42 if k=='Hardware' else .52 if k=='Reflective' else .78 if k=='Boots' else .88,.7 if k=='Hardware' else .12 if k=='Reflective' else 0) for k,c in palette.items()}
 mats['Gloves']=mats['Boots'].copy();mats['Gloves'].name='PlayerWinter_Gloves'
+mats['Scarf'].name='PlayerWinter_Liner'
+ap=mats['Accent'].node_tree.nodes.get('Principled BSDF')
+ap.inputs['Emission Color'].default_value=(.035,.58,.85,1);ap.inputs['Emission Strength'].default_value=2.2
 
 def setmat(o,m):o.data.materials.clear();o.data.materials.append(m)
 
@@ -79,8 +84,10 @@ def fabric_from_source(target,source_mat,tint,color,label):
     n=p.inputs['Base Color'].links[0].from_node
     image=n.image.copy();image.name='Player Winter / '+label+' baked woven albedo'
     px=np.array(image.pixels[:],dtype=np.float32).reshape(-1,4)
-    gray=np.clip((px[:,:3]/np.array(tint))@np.array([.2126,.7152,.0722]),.20,.96)
-    # Bake the actual navy/charcoal colour once. No runtime wardrobe tint needed.
+    gray=np.clip((px[:,:3]/np.array(tint))@np.array([.2126,.7152,.0722]),0,.96)
+    # A pearl technical textile keeps the source folds without multiplying
+    # the old dark civilian albedo into the new light winter uniform.
+    gray=(.77+.23*gray) if label=='parka' else (.73+.27*gray)
     px[:,:3]=gray[:,None]*np.array(color);image.pixels.foreach_set(px.ravel());image.update();image.pack()
     p=target.node_tree.nodes.get('Principled BSDF');p.inputs['Base Color'].default_value=(1,1,1,1)
     target.diffuse_color=(1,1,1,1)
@@ -102,7 +109,7 @@ knit=bpy.data.images.new('Player Winter / rib knit wool albedo',width=256,height
 kp=np.ones((256,256,4),dtype=np.float32)
 g=.80+.075*np.sin(xx*pi/3+.65*np.sin(yy*pi/4))+.025*np.cos(yy*pi/2)
 kp[:,:,:3]=g[:,:,None];knit.pixels.foreach_set(kp.ravel());knit.pack()
-for key in ['Scarf','Beanie','Cuffs']:
+for key in ['Scarf','Cuffs']:
     image=knit.copy();image.name='Player Winter / '+key+' knit';px=np.array(image.pixels[:],dtype=np.float32).reshape(-1,4)
     px[:,:3]*=np.array(palette[key]);image.pixels.foreach_set(px.ravel());image.update();image.pack()
     mat=mats[key];p=mat.node_tree.nodes.get('Principled BSDF');p.inputs['Base Color'].default_value=(1,1,1,1);mat.diffuse_color=(1,1,1,1)
@@ -111,7 +118,7 @@ for key in ['Scarf','Beanie','Cuffs']:
 
 # Keep the player's original face, head and proportions. Insulation is only
 # 12–20mm, so the seated silhouette stays close to the original driver.
-shirt.name='Player Winter / quilted insulated parka'; inv=shirt.matrix_world.inverted()
+shirt.name='Player Winter / pearl quilted insulated suit jacket'; inv=shirt.matrix_world.inverted()
 for v in shirt.data.vertices:
     p=shirt.matrix_world@v.co;n=(shirt.matrix_world.to_3x3().inverted().transposed()@v.normal).normalized()
     torso=abs(p.x)<.235
@@ -153,15 +160,17 @@ for v in shoes.data.vertices:
 shoes.data.update()
 face=subset(body,'Player Winter / original detailed face and neck',lambda p:p.z>1.475 and abs(p.x)<.19)
 remove(body);source.remove(body)
-# Let natural sideburns peek below the beanie, without hair cards through its top.
-cropped=subset(hair,'Player Winter / original hair below knit cap',lambda p:p.z<1.707)
-remove(hair);source.remove(hair);hair=cropped
+# Keep the complete original hairstyle, including all hair cards and its atlas.
+original_hair_vertices=len(hair.data.vertices)
+original_hair_polygons=len(hair.data.polygons)
+original_hair_sha256=hashlib.sha256(np.array([tuple(v.co) for v in hair.data.vertices],dtype=np.float32).tobytes()).hexdigest()
+hair.name='Player Winter / original full hairstyle'
 
 extras=[]
 def add(o):extras.append(o);return o
 
-add(shell('Player Winter / amber scarf neck wrap',[(0,.006,1.452,.080,.094),(0,.004,1.482,.084,.091),(0,.006,1.518,.080,.083),(0,.008,1.544,.072,.075)],mats['Scarf'],face,garment_surface_weights,64))
-add(ribbon('Player Winter / folded amber scarf end',[(-.027,-.103,1.510),(-.034,-.162,1.46),(-.038,-.211,1.405),(-.047,-.220,1.35),(-.051,-.213,1.29),(-.048,-.206,1.24)],.060,.005,mats['Scarf'],face,garment_surface_weights))
+liner=add(shell('Player Winter / silver rib knit thermal neck liner',[(0,.006,1.452,.080,.094),(0,.004,1.482,.084,.091),(0,.006,1.518,.080,.083),(0,.008,1.544,.072,.075)],mats['Scarf'],face,garment_surface_weights,64))
+liner['first_person_hidden']=True
 add(shell('Player Winter / padded high collar',[(0,.025,1.438,.105,.107),(0,.024,1.470,.101,.102),(0,.022,1.502,.088,.093)],mats['Coat'],face,garment_surface_weights,64))
 
 # Down-folded hood: open front U section gives depth at shoulders without
@@ -173,50 +182,122 @@ for i,(z,rx,ry,cy) in enumerate([(1.411,.145,.121,.056),(1.438,.150,.133,.061),(
         verts.append((rx*cos(a),cy+ry*sin(a),z-.011*cos(a*2)))
 for i in range(3):
     for j in range(segments-1):faces.append((i*segments+j,i*segments+j+1,(i+1)*segments+j+1,(i+1)*segments+j))
-hood=add(newgeo('Player Winter / folded insulated hood',verts,faces,mats['Coat'],face,garment_surface_weights))
+hood=add(newgeo('Player Winter / folded insulated hood',verts,faces,mats['Panels'],face,garment_surface_weights))
 hood['first_person_hidden']=True
 
 # Close the tee's V opening beneath the collar with a proper jacket placket.
-rows=[(1.505,.108,-.092),(1.470,.104,-.117),(1.435,.090,-.143),(1.400,.070,-.164),(1.365,.044,-.185),(1.335,.010,-.196)]
+rows=[(1.505,.108,-.080),(1.470,.104,-.105),(1.435,.090,-.131),(1.400,.070,-.152),(1.365,.044,-.173),(1.335,.010,-.184)]
 iv=[];iff=[]
 for z,w,y in rows:iv.extend([(-w*.5,y,z),(0,y-.004,z),(w*.5,y,z)])
 for i in range(len(rows)-1):
     for j in range(2):iff.append(((i+1)*3+j,(i+1)*3+j+1,i*3+j+1,i*3+j))
-add(newgeo('Player Winter / insulated zipper placket',iv,iff,mats['Coat'],face,garment_surface_weights))
+inset=add(newgeo('Player Winter / recessed thermal undersuit neckline',iv,iff,mats['Scarf'],face,garment_surface_weights))
+inset['first_person_hidden']=True
+bpy.ops.object.select_all(action='DESELECT');inset.select_set(True);bpy.context.view_layer.objects.active=inset
+sub=inset.modifiers.new('Soft undersuit neckline','SUBSURF');sub.levels=2
+while list(inset.modifiers).index(sub)>0:bpy.ops.object.modifier_move_up(modifier=sub.name)
+bpy.ops.object.modifier_apply(modifier=sub.name)
 
-# Surface fitting puts real seam piping, pocket openings and horizontal quilt
-# channels on the jacket, rather than floating straight lines in front of it.
-spoints=[shirt.matrix_world@v.co for v in shirt.data.vertices]
-def surface(x,z,front=True,offset=.003):
-    candidates=sorted(spoints,key=lambda p:abs(p.x-x)*1.8+abs(p.z-z)*2.3)[:18]
-    p=min(candidates,key=lambda p:p.y) if front else max(candidates,key=lambda p:p.y)
-    return (x,p.y+(-offset if front else offset),z)
+# A world-space triangle BVH projects actual cloth triangles, not nearby mesh
+# vertices. Barycentric weights reproduce the exact underlying garment skinning
+# so panels and piping remain flush when the spine/arms bend while driving.
+def fitted_surface_tools(o):
+    o.data.calc_loop_triangles()
+    coords=[o.matrix_world@v.co for v in o.data.vertices]
+    triangles=[tuple(t.vertices) for t in o.data.loop_triangles]
+    tree=BVHTree.FromPolygons(coords,triangles,all_triangles=True,epsilon=.000001)
+    bindings=[{o.vertex_groups[g.group].name:g.weight for g in v.groups} for v in o.data.vertices]
+    def hit(x,z,front=True):
+        co,no,index,dist=tree.ray_cast(Vector((x,-2 if front else 2,z)),Vector((0,1 if front else -1,0)),4)
+        if co is None:
+            co,no,index,dist=tree.find_nearest(Vector((x,-.15 if front else .15,z)))
+        return co,no,index
+    def project(x,z,front=True,offset=.0015):
+        co,no,index=hit(x,z,front)
+        outward=Vector((0,-1 if front else 1,0))
+        if no.dot(outward)<0:no=-no
+        return tuple(co+no.normalized()*offset)
+    def weights(p,front=True):
+        co,no,index=hit(p.x,p.z,front)
+        ids=triangles[index];a,b,c=[coords[i] for i in ids]
+        ab=b-a;ac=c-a;ap=co-a
+        d00=ab.dot(ab);d01=ab.dot(ac);d11=ac.dot(ac);d20=ap.dot(ab);d21=ap.dot(ac)
+        den=d00*d11-d01*d01
+        v=(d11*d20-d01*d21)/den if abs(den)>1e-15 else 0
+        w=(d00*d21-d01*d20)/den if abs(den)>1e-15 else 0
+        bary=[max(0,1-v-w),max(0,v),max(0,w)];combined={}
+        for i,factor in zip(ids,bary):
+            for name,weight in bindings[i].items():combined[name]=combined.get(name,0)+factor*weight
+        total=sum(combined.values())
+        return {name:w/total for name,w in combined.items() if w/total>.0001}
+    return project,weights
+
+surface,coat_weights=fitted_surface_tools(shirt)
+armproject,armweights=fitted_surface_tools(sleeves)
+def coat_follow(p):return coat_weights(p,front=p.y<.025)
+def panel_thickness(o):
+    bpy.ops.object.select_all(action='DESELECT');o.select_set(True);bpy.context.view_layer.objects.active=o
+    mod=o.modifiers.new('Bonded technical fabric thickness','SOLIDIFY');mod.thickness=.085;mod.offset=-1
+    while list(o.modifiers).index(mod)>0:bpy.ops.object.modifier_move_up(modifier=mod.name)
+    bpy.ops.object.modifier_apply(modifier=mod.name)
+    return o
+
 for z,width in [(.95,.175),(1.05,.18),(1.15,.183),(1.25,.18),(1.35,.158)]:
     for front in (True,False):
-        pts=[surface(-width+2*width*i/18,z,front,.0035) for i in range(19)]
-        add(seam('Player Winter / horizontal quilt channel',pts,.0016,mats['Seams'],face,garment_surface_weights))
-zippts=[surface(.004,z,True,.0045) for z in [1.43,1.38,1.32,1.24,1.14,1.04,.94,.89]]
-add(seam('Player Winter / center front weatherproof zipper',zippts,.003,mats['Hardware'],face,garment_surface_weights))
+        pts=[surface(-width+2*width*i/28,z,front,.0007) for i in range(29)]
+        add(seam('Player Winter / horizontal quilt channel',pts,.0010,mats['Seams'],face,coat_follow))
+zippts=[surface(.004,z,True,.0017) for z in [1.30,1.28,1.24,1.20,1.14,1.10,1.04,1.0,.94,.89]]
+add(seam('Player Winter / center front weatherproof zipper',zippts,.0017,mats['Hardware'],face,coat_follow))
 for sign in (-1,1):
-    pts=[surface(sign*x,z,True,.006) for x,z in [(.10,1.08),(.12,1.04),(.14,1.0)]]
-    add(seam('Player Winter / zip handwarmer pocket opening',pts,.004,mats['Seams'],face,garment_surface_weights))
-    pts=[surface(sign*x,z,True,.007) for x,z in [(.097,1.083),(.117,1.043),(.137,1.003)]]
-    add(seam('Player Winter / pocket edge topstitch',pts,.0011,mats['Reflective'],face,garment_surface_weights))
+    pts=[surface(sign*x,z,True,.0012) for x,z in [(.10,1.08),(.11,1.06),(.12,1.04),(.13,1.02),(.14,1.0)]]
+    add(seam('Player Winter / zip handwarmer pocket opening',pts,.0022,mats['Seams'],face,coat_follow))
+    pts=[surface(sign*x,z,True,.0014) for x,z in [(.097,1.083),(.107,1.063),(.117,1.043),(.127,1.023),(.137,1.003)]]
+    add(seam('Player Winter / pocket edge topstitch',pts,.0008,mats['Reflective'],face,coat_follow))
     # A small shoulder strip catches night lighting without large luminous trim.
-    pts=[surface(sign*x,1.366,True,.006) for x in [.10,.13,.16]]
-    add(seam('Player Winter / subtle shoulder reflective tab',pts,.0020,mats['Reflective'],face,garment_surface_weights))
+    pts=[surface(sign*x,1.366,True,.0012) for x in [.10,.115,.13,.145,.16]]
+    add(seam('Player Winter / subtle shoulder reflective tab',pts,.0014,mats['Reflective'],face,coat_follow))
 # Slim rectangular zipper pull, not an oversized glowing accessory.
-zp=Vector(surface(.004,1.34,True,.010))
-add(seam('Player Winter / zipper pull loop',[tuple(zp+Vector((-.004,0,.003))),tuple(zp+Vector((-.004,-.001,-.019))),tuple(zp+Vector((.004,-.001,-.019))),tuple(zp+Vector((.004,0,.003)))],.0014,mats['Hardware'],face,garment_surface_weights))
+zp=Vector(surface(.004,1.34,True,.004))
+add(seam('Player Winter / zipper pull loop',[tuple(zp+Vector((-.004,0,.003))),tuple(zp+Vector((-.004,-.001,-.019))),tuple(zp+Vector((.004,-.001,-.019))),tuple(zp+Vector((.004,0,.003)))],.0012,mats['Hardware'],face,coat_follow))
 
-# Fitted hat with a folded ribbed cuff; highest point is only ~3cm above hair.
-rings=[(.003,.003,1.716,.122,.112),(.003,.004,1.741,.124,.114),(.003,.006,1.764,.119,.109),(.004,.010,1.787,.108,.098),(.006,.016,1.802,.080,.073),(.008,.018,1.812,.043,.040),(.008,.018,1.815,.006,.006)]
-add(shell('Player Winter / fitted wool beanie',rings,mats['Beanie'],face,rigid('Head'),64))
-add(shell('Player Winter / folded beanie rib cuff',[(.003,.003,1.714,.125,.116),(.003,.003,1.730,.127,.118),(.003,.004,1.752,.124,.115)],mats['Beanie'],face,rigid('Head'),64))
-for j in range(40):
-    a=j*2*pi/40
-    pts=[(.003+rx*cos(a),.003+ry*sin(a),z) for z,rx,ry in [(1.716,.126,.117),(1.731,.128,.119),(1.751,.125,.116)]]
-    add(seam('Player Winter / knit cuff raised rib',pts,.00085,mats['Beanie'],face,rigid('Head')))
+# Tailored technical chest plates sit only a few millimetres off the cloth;
+# narrow ice-blue inlays add a futuristic identity without excessive bloom.
+for sign in (-1,1):
+    pv=[];pf=[];cols=9;rows=12
+    for iz in range(rows):
+        t=iz/(rows-1);z=1.235+t*.135;inner=.046+t*.030;outer=.166-t*.018
+        for ix in range(cols):
+            x=sign*(inner+(outer-inner)*ix/(cols-1));pv.append(surface(x,z,True,.0016))
+    for iz in range(rows-1):
+        for ix in range(cols-1):
+            f=(iz*cols+ix,iz*cols+ix+1,(iz+1)*cols+ix+1,(iz+1)*cols+ix)
+            pf.append(f if sign>0 else tuple(reversed(f)))
+    add(panel_thickness(newgeo('Player Winter / bonded curved silver chest panel',pv,pf,mats['Panels'],face,coat_follow)))
+    pts=[surface(sign*x,1.347,True,.0027) for x in [.078,.09,.105,.12,.135]]
+    add(seam('Player Winter / ice cyan chest inlay',pts,.0010,mats['Accent'],face,coat_follow))
+    pts=[surface(sign*x,z,True,.0014) for x,z in [(.055,1.242),(.05,1.22),(.045,1.20),(.043,1.175),(.042,1.15)]]
+    add(seam('Player Winter / tailored chest panel seam',pts,.0008,mats['Seams'],face,coat_follow))
+    # Parallel small shoulder service marks are embroidered geometry.
+    for z in [1.302,1.293,1.284]:
+        pts=[surface(sign*x,z,True,.0027) for x in [.073,.080,.086,.092,.099]]
+        add(seam('Player Winter / embroidered service insignia',pts,.0007,mats['Reflective'],face,coat_follow))
+    if sign<0:
+        for glyph in [[(.113,1.312),(.113,1.294),(.123,1.294),(.123,1.312),(.113,1.312)],[(.129,1.312),(.141,1.312),(.132,1.294)]]:
+            pts=[surface(sign*x,z,True,.0027) for x,z in glyph]
+            add(seam('Player Winter / tiny ice cyan 07 insignia',pts,.0007,mats['Accent'],face,coat_follow))
+    # Forearm panels are skinned to the same captured forearm joint.
+    def armsurface(x,z,offset=.0015):return armproject(x,z,True,offset)
+    av=[];af=[];side='Left' if sign>0 else 'Right'
+    for iz in range(5):
+        z=1.409+iz*.009
+        for ix in range(10):av.append(armsurface(sign*(.515+ix*.0133),z,.0016))
+    for iz in range(4):
+        for ix in range(9):
+            f=(iz*10+ix,iz*10+ix+1,(iz+1)*10+ix+1,(iz+1)*10+ix)
+            af.append(f if sign>0 else tuple(reversed(f)))
+    add(panel_thickness(newgeo('Player Winter / bonded curved technical forearm panel',av,af,mats['Panels'],face,armweights)))
+    pts=[armsurface(sign*x,1.428,.0027) for x in [.535,.545,.555,.565,.575,.585,.595]]
+    add(seam('Player Winter / ice cyan sleeve inlay',pts,.0010,mats['Accent'],face,armweights))
 
 # Rib-knit cuffs follow the actual wrists. The retained high-top shoes already
 # contain detailed toes/laces/tread; their original Foot skinning avoids loose
@@ -232,6 +313,14 @@ for sign,side in [(1,'Left'),(-1,'Right')]:
     for i in range(2):
         for j in range(seg):f.append((i*seg+j,i*seg+(j+1)%seg,(i+1)*seg+(j+1)%seg,(i+1)*seg+j))
     add(newgeo('Player Winter / ribbed sleeve cuff',v,f,mats['Cuffs'],face,rigid(side+'ForeArm')))
+    # A continuous thermal sock closes the trouser/boot joint. Its upper rows
+    # follow the calf, lower rows follow the foot: no detached rigid rings.
+    ankle=rig.matrix_world@rig.pose.bones['mixamorig:'+side+'Foot'].head
+    def ankle_weights(p,side=side,ankle_z=ankle.z):
+        t=max(0,min(1,(p.z-(ankle_z-.012))/.055))
+        return {'mixamorig:'+side+'Leg':t,'mixamorig:'+side+'Foot':1-t}
+    rings=[(ankle.x,ankle.y,ankle.z+dz,rx,ry) for dz,rx,ry in [(-.040,.041,.051),(-.015,.042,.051),(.008,.043,.052),(.033,.043,.052),(.058,.043,.052),(.088,.042,.051)]]
+    add(shell('Player Winter / fitted thermal boot ankle liner',rings,mats['Cuffs'],face,ankle_weights,40))
 
 objects=[shirt,trousers,shoes,hair,sleeves,gloves,face]+[o for o in source if 'Eyes' in o.name or 'Eyelashes' in o.name]+extras
 # Atlas sampling prevents a shirt's unused black UV regions on new sleeves.
@@ -262,7 +351,7 @@ for a in original_actions.values():
     if len(a.slots):strip.action_slot=a.slots[0]
 bind(rig,original_actions['Idle']);scene.frame_set(0);bpy.context.view_layer.update()
 lo,hi=bounds(objects)
-root['wardrobe']='Detailed fitted navy quilted winter parka, amber scarf, ribbed beanie, gloves, cargo trousers and boots'
+root['wardrobe']='Pearl insulated futuristic winter suit, silver thermal neck liner, articulated pale gray panels, restrained ice-cyan inlays, graphite gloves and boots; original full hairstyle, no headwear'
 root['winter_source_sha256']=SOURCE_HASH
 for image in bpy.data.images:
     if image.name not in {'Render Result','Viewer Node'}:
@@ -287,7 +376,7 @@ for name in original_actions:
         pelvis=rig.matrix_world@rig.pose.bones['mixamorig:Hips'].head
         samples[name].append(dict(frame=frame,min=mn,max=mx,pelvis=list(pelvis)))
 bind(rig,original_actions['Idle']);scene.frame_set(0);bpy.context.view_layer.update()
-manifest=dict(name='Winter driver / detailed insulated civilian outfit',url='/models/person/person-winter.glb',sourceBlend='artifacts/blender/person.blend',sourceSHA256=SOURCE_HASH,editableWinterBlend='artifacts/blender/person-winter.blend',standingHeightMeters=1.8,wardrobeHeightMeters=hi[2]-lo[2],idleBounds=dict(min=lo,max=hi),forward='+Z',up='+Y',root='feet centred, ground Y=0',seatedPelvisLocalY=.95,interactionDurationSeconds=1.3,clips=clips,bones=original_bones,animationPoseSamples=samples,meshes=len(g['meshes']),materials=[m['name'] for m in g['materials']],textures=len(g.get('images',[])),vertices=sum(g['accessors'][p['attributes']['POSITION']]['count'] for m in g['meshes'] for p in m['primitives']),triangles=sum(g['accessors'][p['indices']]['count']//3 for m in g['meshes'] for p in m['primitives']),glbBytes=len(data),sha256=hashlib.sha256(data).hexdigest(),previewImages=['person-winter-fullbody.png','person-winter-closeup.png','person-winter-seated.png'],details=['shallow quilt baffles and seam piping','fine woven cloth and wool knit textures','fitted folded hood and high collar','muted amber scarf with folded tail','beanie folded cuff with raised ribs','articulated gloves retain all finger skinning','handwarmer pocket zips and edge stitching','zipper pull hardware','small reflective shoulder tabs','substantial lug sole high-top boots retaining source laces/tread'],preservedOriginalSkeletonAndSixActions=True)
+manifest=dict(name='Winter driver / pearl futuristic insulated suit',url='/models/person/person-winter.glb',sourceBlend='artifacts/blender/person.blend',sourceSHA256=SOURCE_HASH,editableWinterBlend='artifacts/blender/person-winter.blend',standingHeightMeters=1.8,wardrobeHeightMeters=hi[2]-lo[2],idleBounds=dict(min=lo,max=hi),forward='+Z',up='+Y',root='feet centred, ground Y=0',seatedPelvisLocalY=.95,interactionDurationSeconds=1.3,clips=clips,bones=original_bones,animationPoseSamples=samples,meshes=len(g['meshes']),materials=[m['name'] for m in g['materials']],textures=len(g.get('images',[])),vertices=sum(g['accessors'][p['attributes']['POSITION']]['count'] for m in g['meshes'] for p in m['primitives']),triangles=sum(g['accessors'][p['indices']]['count']//3 for m in g['meshes'] for p in m['primitives']),glbBytes=len(data),sha256=hashlib.sha256(data).hexdigest(),previewImages=['person-winter-fullbody.png','person-winter-closeup.png','person-winter-seated.png'],headwear='none',noHat=True,originalHairPreserved=True,originalFullHairstylePreserved=True,originalHairVertexCount=original_hair_vertices,originalHairPolygonCount=original_hair_polygons,originalHairPositionsSHA256=original_hair_sha256,details=['pearl-white insulated quilted suit jacket and silver lined trousers','original full hairstyle, face and head visible','fine woven cloth and rib knit thermal liner textures','pale silver articulated chest and forearm panels','restrained ice-cyan emissive inlays and tiny 07 insignia','fitted folded hood and high collar','articulated graphite gloves retain all finger skinning','handwarmer pocket zips and edge stitching','zipper pull hardware','small reflective shoulder tabs','substantial lug sole high-top boots retaining source laces/tread'],preservedOriginalSkeletonAndSixActions=True)
 (WEB/'person-winter-manifest.json').write_text(json.dumps(manifest,indent=2))
 print('PLAYER_WINTER_EXPORTED',json.dumps({k:manifest[k] for k in ['url','wardrobeHeightMeters','idleBounds','clips','meshes','materials','textures','vertices','triangles','glbBytes']}),flush=True)
 
