@@ -7,6 +7,7 @@ import {
   isCitySquare,
 } from './city-layout';
 import type { CoveredRoad } from './city-infrastructure';
+import type { GraphicsQuality } from './graphics-quality';
 import {
   BORDER_SNOW_GLSL,
   BORDER_SNOW_START,
@@ -173,11 +174,15 @@ export function addRoadSnow(
   geometry.setDrawRange(0, 0);
   geometry.computeBoundingSphere();
 
-  const size = 128,
+  const size = 256,
     texels = new Uint8Array(size * size * 4);
   for (let z = 0; z < size; z++)
     for (let x = 0; x < size; x++) {
-      const value = 212 + Math.floor(noise(x, z) * 43),
+      // Periodic wind ridges and fine crystals share the existing albedo/bump
+      // samples. Mipmaps filter them before they can sparkle in the distance.
+      const u = x / size * Math.PI * 2, v = z / size * Math.PI * 2;
+      const ridge = Math.sin(u * 6 + Math.sin(v * 2) * 1.2) * Math.sin(v * 3 + Math.sin(u));
+      const value = Math.round(231 + (noise(x, z) - .5) * 28 + ridge * 10),
         offset = (z * size + x) * 4;
       texels[offset] = texels[offset + 1] = texels[offset + 2] = value;
       texels[offset + 3] = 255;
@@ -204,7 +209,9 @@ export function addRoadSnow(
     emissive: 0x192633,
     emissiveIntensity: 0.18,
   });
+  const snowDetail = { value: 0 };
   material.onBeforeCompile = (shader) => {
+    shader.uniforms.snowDetail = snowDetail;
     shader.vertexShader = shader.vertexShader.replace(
       '#include <common>',
       '#include <common>\nattribute float snowCoverage;\nattribute float snowExterior;\nvarying float vSnowCoverage;\nvarying float vSnowExterior;\nvarying vec2 vSnowWorld;',
@@ -215,8 +222,15 @@ export function addRoadSnow(
     );
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <common>',
-      '#include <common>\nvarying float vSnowCoverage;\nvarying float vSnowExterior;\nvarying vec2 vSnowWorld;\n' +
+      '#include <common>\nuniform float snowDetail;\nvarying float vSnowCoverage;\nvarying float vSnowExterior;\nvarying vec2 vSnowWorld;\n' +
         BORDER_SNOW_GLSL,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <roughnessmap_fragment>',
+      `#include <roughnessmap_fragment>
+      float snowCrystal = clamp((sampledDiffuseColor.r - .68) * 3., 0., 1.);
+      roughnessFactor = mix(roughnessFactor, .82 + snowCrystal * .15, snowDetail * vSnowCoverage);
+      diffuseColor.rgb *= 1. - snowDetail * (1. - snowCrystal) * .07;`,
     );
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <alphatest_fragment>',
@@ -229,7 +243,7 @@ export function addRoadSnow(
     `,
     );
   };
-  material.customProgramCacheKey = () => 'snow-island-shoreline-v3';
+  material.customProgramCacheKey = () => 'snow-island-shoreline-v4';
   const banks = new THREE.Mesh(geometry, material);
   banks.name = 'Snow / plowed roadside banks';
   banks.receiveShadow = true;
@@ -348,6 +362,10 @@ export function addRoadSnow(
     border,
     allIndices,
     sample,
+    setPreset(preset: GraphicsQuality) {
+      snowDetail.value = { low: .08, medium: 0, high: .55, ultra: 1 }[preset];
+      material.bumpScale = { low: .018, medium: .018, high: .024, ultra: .03 }[preset];
+    },
     update(position: THREE.Vector3) {
       const x = nearestBlock(position.x),
         z = nearestBlock(position.z);

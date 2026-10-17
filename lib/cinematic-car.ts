@@ -311,8 +311,20 @@ export function makeCar() {
   underglow.rotation.x = -Math.PI / 2; underglow.position.y = .04;
   underglow.visible = false; car.add(underglow);
 
-  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 5.9),
-    new THREE.MeshBasicMaterial({ color: 0x000006, alphaMap: glowMap, transparent: true, opacity: .9, depthWrite: false }));
+  const shadowMaterial = new THREE.MeshBasicMaterial({ color: 0x000006, alphaMap: glowMap, transparent: true, opacity: .9, depthWrite: false });
+  shadowMaterial.name = 'Car / analytic soft contact shadow';
+  shadowMaterial.onBeforeCompile = shader => {
+    // A mipmapped alpha texture eventually averages to nonzero opacity across
+    // the whole plane, producing a dark rectangle under distant vehicles.
+    // Evaluate its rounded footprint directly in the existing shadow draw.
+    shader.fragmentShader = shader.fragmentShader.replace('#include <alphamap_fragment>', `
+      float contactRadius = length(vAlphaMapUv - vec2(.5));
+      diffuseColor.a *= 1. - smoothstep(.08, .5, contactRadius);
+    `);
+  };
+  shadowMaterial.customProgramCacheKey = () => 'car-contact-shadow-analytic-v1';
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 5.9), shadowMaterial);
+  shadow.name = 'Car / soft contact shadow';
   shadow.rotation.x = -Math.PI / 2; shadow.position.y = .037; car.add(shadow);
 
   // Nitrous glow uses the effects' existing draw, avoiding another per-pixel city light.

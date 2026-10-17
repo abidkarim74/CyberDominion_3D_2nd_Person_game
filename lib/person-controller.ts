@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CAR_HALF_LENGTH, CAR_HALF_WIDTH, type ColliderGrid, type WorldCollider } from './city-collision';
 import { CITY_EDGE } from './city-layout';
 import { PersonIdleMotion } from './person-idle-motion';
+import { PersonFaceMotion } from './person-face-motion';
 import { PersonSeatMotion, type FootContacts } from './person-seat-motion';
 import { PersonGroundMotion } from './person-ground-motion';
 import { PersonSteeringMotion, type HandContacts } from './person-steering-motion';
@@ -86,6 +87,7 @@ export class PersonController {
   private model?: THREE.Group;
   private mixer?: THREE.AnimationMixer;
   private idleMotion?: PersonIdleMotion;
+  private faceMotion?: PersonFaceMotion;
   private seatMotion?: PersonSeatMotion;
   private groundMotion?: PersonGroundMotion;
   private runGroundOffset = 0;
@@ -93,11 +95,14 @@ export class PersonController {
   private driverVisibility?: PersonDriverVisibility;
   private driverView = false;
   private readonly actions = new Map<string, THREE.AnimationAction>();
+  private readonly stridePhases = new Map<string, number>();
+  private readonly locomotion = { speed: 0, acceleration: 0, turnRate: 0 };
   private activeAction?: THREE.AnimationAction;
   private transition?: Transition;
   private readonly velocity = new THREE.Vector3();
   private readonly input = new THREE.Vector3();
   private readonly desiredVelocity = new THREE.Vector3();
+  private readonly velocityChange = new THREE.Vector3();
   private readonly seatWorld = new THREE.Vector3();
   private readonly doorWorld = new THREE.Vector3();
   private readonly transferWorld = new THREE.Vector3();
@@ -133,7 +138,7 @@ export class PersonController {
   private readonly diagnosticState: {
     asset: string; animations: string[]; height: number; scale: number; meshes: number; triangles: number;
     collisionRadius: number; transitionSeconds: number; loadingError?: string;
-  } = { asset: '/models/person/person-winter.glb?v=winter-outfit-v2', animations: [], height: 0, scale: PERSON_SCALE, meshes: 0,
+  } = { asset: '/models/person/person.glb?v=original-blender-v1', animations: [], height: 0, scale: PERSON_SCALE, meshes: 0,
     triangles: 0, collisionRadius: RADIUS, transitionSeconds: TRANSITION_SECONDS };
   private readonly ankleFloor = (ankle: THREE.Vector3, side: 'left' | 'right') => {
     const rest = this.footRest.get(side), contact = this.footContacts[side];
@@ -161,7 +166,7 @@ export class PersonController {
     private readonly cabin?: THREE.Object3D,
     private readonly steeringWheel?: THREE.Object3D,
     private readonly driverDoor?: THREE.Object3D) {
-    this.root.name = 'Player / futuristic winter suit';
+    this.root.name = 'Player / original civilian';
     this.root.rotation.order = 'YXZ';
     this.root.userData.dynamic = true;
     this.root.visible = false;
@@ -169,7 +174,7 @@ export class PersonController {
     new GLTFLoader().load(this.diagnosticState.asset, gltf => {
       if (this.disposed) { this.disposeModel(gltf.scene); return; }
       this.model = gltf.scene;
-      this.model.name = 'Blender / rigged winter driver';
+      this.model.name = 'Blender / rigged original driver';
       this.model.scale.multiplyScalar(PERSON_SCALE);
       this.model.traverse(object => {
         object.userData.dynamic = true;
@@ -211,11 +216,13 @@ export class PersonController {
       // road sole in its planted pose, rather than carrying seated skin offsets
       // into a standing ankle target that would buckle both knees.
       this.calibrateSoles();
+      this.calibrateStridePhases();
       this.groundMotion = new PersonGroundMotion(this.model);
       this.calibrateRunGrounding();
       this.play('Seated', 0);
       this.mixer.update(0);
       this.idleMotion = new PersonIdleMotion(this.model);
+      this.faceMotion = new PersonFaceMotion(this.model);
       this.seatMotion = new PersonSeatMotion(this.model);
       if (this.steeringWheel) this.steeringMotion = new PersonSteeringMotion(this.model, this.steeringWheel);
       this.driverVisibility = new PersonDriverVisibility(this.model);
@@ -279,8 +286,12 @@ export class PersonController {
     } else if (this.transition) this.updateTransition(dt);
     else if (this.ready) this.updateWalking(dt, pressed);
     this.mixer?.update(dt);
+    this.faceMotion?.update(dt);
+    if (this.mode !== 'walking') {
+      this.locomotion.speed = this.locomotion.acceleration = this.locomotion.turnRate = 0;
+    }
     this.idleMotion?.update(dt, this.mode === 'walking' && this.speed < .10,
-      this.mode === 'driving', this.transferDuck);
+      this.mode === 'driving', this.transferDuck, this.mode === 'walking' ? this.locomotion : undefined);
     this.updateContacts();
     if (this.mode === 'walking') {
       const run = this.actions.get('Run');
@@ -380,6 +391,17 @@ export class PersonController {
     if (!action || action === this.activeAction && !oneShot) return;
     const previous = this.activeAction;
     action.reset().setEffectiveWeight(1).setEffectiveTimeScale(1);
+    // Preserve the same supporting leg when accelerating into a run. Captured
+    // clips may begin at different points in a stride, so align their measured
+    // left-foot contact phases rather than restarting both at frame zero.
+    if ((name === 'Walk' || name === 'Run') && previous) {
+      const previousName = this.canonicalClipName(previous.getClip().name);
+      if (previousName === 'Walk' || previousName === 'Run') {
+        const phase = previous.time / previous.getClip().duration - (this.stridePhases.get(previousName) ?? 0);
+        action.time = THREE.MathUtils.euclideanModulo(phase + (this.stridePhases.get(name) ?? 0), 1)
+          * action.getClip().duration;
+      }
+    }
     action.setLoop(oneShot ? THREE.LoopOnce : THREE.LoopRepeat, oneShot ? 1 : Infinity);
     action.clampWhenFinished = oneShot;
     if (oneShot) action.setDuration(TRANSITION_SECONDS);
@@ -548,6 +570,27 @@ export class PersonController {
     }
   }
 
+  /** Find the forward left-foot strike in each capture's cyclic timeline. */
+  private calibrateStridePhases() {
+    if (!this.model || !this.mixer) return;
+    const left = this.footRest.get('left')?.bone;
+    if (!left) return;
+    for (const name of ['Walk', 'Run']) {
+      this.play(name, 0);
+      const action = this.actions.get(name);
+      if (!action) continue;
+      let forward = -Infinity, phase = 0;
+      for (let sample = 0; sample < 64; sample++) {
+        action.time = action.getClip().duration * sample / 64;
+        this.mixer.update(0); this.model.updateWorldMatrix(true, true);
+        left.getWorldPosition(this.soleAxis);
+        this.model.worldToLocal(this.soleAxis);
+        if (this.soleAxis.z > forward) { forward = this.soleAxis.z; phase = sample / 64; }
+      }
+      this.stridePhases.set(name, phase);
+    }
+  }
+
   /** Preserve the authored flight arc while bringing its lowest stance onto the road. */
   private calibrateRunGrounding() {
     if (!this.model || !this.mixer) return;
@@ -633,22 +676,41 @@ export class PersonController {
     if (moving) this.input.normalize();
     const running = pressed.has('ShiftLeft') || pressed.has('ShiftRight') || pressed.has('Shift') || pressed.has('shift');
     this.desiredVelocity.copy(this.input).multiplyScalar(running ? RUN_SPEED : WALK_SPEED);
-    this.velocity.lerp(this.desiredVelocity, 1 - Math.exp(-dt * (moving ? 11 : 14)));
-    if (!moving && this.velocity.lengthSq() < .0025) this.velocity.set(0, 0, 0);
-    if (moving) {
-      const desiredYaw = Math.atan2(this.input.x, this.input.z);
-      this.yaw += angleDifference(desiredYaw, this.yaw) * (1 - Math.exp(-dt * 13));
-    }
+    const previousSpeed = this.speed, previousYaw = this.yaw;
+    // Bounded acceleration gives starts, stops and reversals a brief weight
+    // transfer, without letting an exponentially smoothed velocity creep on.
+    const braking = !moving || this.velocity.dot(this.desiredVelocity) < 0
+      || this.desiredVelocity.lengthSq() < this.velocity.lengthSq();
+    const change = this.velocityChange.copy(this.desiredVelocity).sub(this.velocity);
+    const maximumChange = (braking ? 12 : running ? 7.5 : 6.5) * dt;
+    if (change.lengthSq() > maximumChange * maximumChange) change.setLength(maximumChange);
+    this.velocity.add(change);
     this.from.copy(this.position);
     this.moveWithSlide(dt);
     this.speed = dt > 0 ? Math.hypot(this.position.x - this.from.x, this.position.z - this.from.z) / dt : 0;
+    if (this.speed > .05) {
+      // Face the travelled direction, including collision sliding. The torso
+      // follows a bounded turn instead of snapping to a new input direction.
+      const desiredYaw = Math.atan2(this.position.x - this.from.x, this.position.z - this.from.z);
+      const maximumTurn = THREE.MathUtils.lerp(5.8, 4.3, Math.min(1, this.speed / RUN_SPEED)) * dt;
+      this.yaw += THREE.MathUtils.clamp(angleDifference(desiredYaw, this.yaw) * (1 - Math.exp(-dt * 14)),
+        -maximumTurn, maximumTurn);
+    }
+    this.locomotion.speed = this.speed;
+    this.locomotion.acceleration = dt > 0 ? (this.speed - previousSpeed) / dt : 0;
+    this.locomotion.turnRate = dt > 0 ? angleDifference(this.yaw, previousYaw) / dt : 0;
     this.resolveVehicleOverlap();
     this.position.y = this.getGroundHeight(this.position.x, this.position.z);
-    const animation = this.speed < .10 ? 'Idle' : this.speed > 2.3 ? 'Run' : 'Walk';
+    const runThreshold = this.activeAction === this.actions.get('Run') ? 2.15 : 2.45;
+    const animation = this.speed < .10 ? 'Idle' : this.speed > runThreshold ? 'Run' : 'Walk';
     this.play(animation, animation === 'Idle' ? .32 : .20);
-    if (this.activeAction && animation !== 'Idle') {
-      const strideSpeed = (animation === 'Run' ? RUN_SPEED : WALK_SPEED) * PERSON_SCALE;
-      this.activeAction.setEffectiveTimeScale(THREE.MathUtils.clamp(this.speed / strideSpeed, .18, 1.3));
+    if (animation !== 'Idle') for (const name of ['Walk', 'Run']) {
+      const action = this.actions.get(name);
+      if (!action?.enabled || action.getEffectiveWeight() < .0001 && action !== this.activeAction) continue;
+      // Both clips must follow distance during their overlap; otherwise the
+      // fading walk keeps stepping at its old speed while the run accelerates.
+      const strideSpeed = (name === 'Run' ? RUN_SPEED : WALK_SPEED) * PERSON_SCALE;
+      action.setEffectiveTimeScale(THREE.MathUtils.clamp(this.speed / strideSpeed, .06, 2.0));
     }
   }
 

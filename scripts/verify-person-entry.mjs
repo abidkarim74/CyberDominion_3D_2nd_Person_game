@@ -54,9 +54,24 @@ try {
       if (vertices.length) heads.push({ mesh, vertices });
       if (footVertices.length) feet.push({ mesh, vertices: footVertices });
     });
+    // Preserve checks against every skinned vertex while limiting each ray to
+    // roof triangles in its cell. The scanned head has far more vertices than
+    // the old model; testing the whole roof per vertex obscures regressions
+    // behind several minutes of redundant triangle checks.
+    const roofCellSize = .08, roofCells = new Map();
+    for (const triangle of roof) {
+      const xs = triangle.map(point => point[0]), zs = triangle.map(point => point[2]);
+      for (let ix = Math.floor((Math.min(...xs) - 1e-7) / roofCellSize); ix <= Math.floor((Math.max(...xs) + 1e-7) / roofCellSize); ix++)
+        for (let iz = Math.floor((Math.min(...zs) - 1e-7) / roofCellSize); iz <= Math.floor((Math.max(...zs) + 1e-7) / roofCellSize); iz++) {
+          const key = `${ix},${iz}`;
+          if (!roofCells.has(key)) roofCells.set(key, []);
+          roofCells.get(key).push(triangle);
+        }
+    }
     const ceiling = (x, z) => {
       let height = Infinity;
-      for (const [a, b, c] of roof) {
+      const candidates = roofCells.get(`${Math.floor(x / roofCellSize)},${Math.floor(z / roofCellSize)}`) ?? [];
+      for (const [a, b, c] of candidates) {
         const denominator = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
         if (Math.abs(denominator) < 1e-10) continue;
         const u = ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) / denominator;

@@ -26,7 +26,8 @@ async function loadPlayer(path) {
   return new GLTFLoader().parseAsync(output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength), '');
 }
 
-const player = await loadPlayer('public/models/person/person-winter.glb');
+const asset = process.env.PERSON_ASSET || 'public/models/person/person.glb';
+const player = await loadPlayer(asset);
 const model = player.scene; model.scale.multiplyScalar(scale);
 const root = new THREE.Group(); root.add(model);
 const bones = new Map(); model.traverse(object => { if (object.isBone) bones.set(object.name.toLowerCase().replace(/[^a-z0-9]/g, ''), object); });
@@ -68,7 +69,7 @@ const clearance = (side, shape = probes) => {
   const rotation = joints[side].ankle.getWorldQuaternion(new THREE.Quaternion()), worldScale = joints[side].ankle.getWorldScale(new THREE.Vector3());
   return Math.max(.04, -Math.min(...shape[side].map(p => p.clone().multiply(worldScale).applyQuaternion(rotation).y)) + .010);
 };
-const solver = new PersonSeatMotion(model), grounding = new PersonGroundMotion(model), report = { asset: 'person-winter.glb', samples: [] };
+const solver = new PersonSeatMotion(model), grounding = new PersonGroundMotion(model), report = { asset, samples: [] };
 let runMinimum = Infinity;
 for (let sample = 0; sample < 48; sample++) {
   pose('Run', actions.get('Run').getClip().duration * sample / 48);

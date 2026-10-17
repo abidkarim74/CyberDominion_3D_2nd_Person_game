@@ -59,11 +59,11 @@ export class NeonBloomPass extends Pass {
   private readonly quad = new FullScreenQuad();
   private readonly extract = material('Neon bloom / luminance extraction', {
     sourceTexture: { value: null },
-    sourceTexel: { value: new THREE.Vector2(1, 1) },
+    sampleOffset: { value: new THREE.Vector2(1, 1) },
     threshold: { value: 1.12 },
   }, /* glsl */ `
     uniform sampler2D sourceTexture;
-    uniform vec2 sourceTexel;
+    uniform vec2 sampleOffset;
     uniform float threshold;
     varying vec2 vUv;
     vec3 brightSample(vec2 uv) {
@@ -77,7 +77,7 @@ export class NeonBloomPass extends Pass {
     }
     void main() {
       // Filter after thresholding to retain thin, bright neon during downsampling.
-      vec2 offset = sourceTexel;
+      vec2 offset = sampleOffset;
       vec3 color = (
         brightSample(vUv + vec2(-offset.x, -offset.y)) +
         brightSample(vUv + vec2(offset.x, -offset.y)) +
@@ -168,7 +168,9 @@ export class NeonBloomPass extends Pass {
 
     try {
       this.extract.uniforms.sourceTexture.value = readBuffer.texture;
-      this.extract.uniforms.sourceTexel.value.set(1 / Math.max(1, readBuffer.width), 1 / Math.max(1, readBuffer.height));
+      // Four bilinear taps follow the actual downsample footprint. A fixed
+      // source-pixel offset over-blurs half-resolution Ultra neon cores.
+      this.extract.uniforms.sampleOffset.value.set(.25 / this.bright.width, .25 / this.bright.height);
       this.extract.uniforms.threshold.value = this.threshold;
       this.draw(renderer, this.bright, this.extract);
 

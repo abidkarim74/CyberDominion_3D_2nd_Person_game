@@ -347,6 +347,9 @@ export class NeonCityGame {
   private personCameraYaw = 0;
   private personCameraElevation = .22;
   private personCameraDistance = 4.5;
+  private readonly personCameraAnchor = new THREE.Vector3();
+  private readonly personCameraTravel = new THREE.Vector3();
+  private readonly personCameraTarget = new THREE.Vector3();
   private lastPersonMode = 'driving';
   private readonly car: THREE.Group;
   private readonly velocity = new THREE.Vector3();
@@ -455,6 +458,7 @@ export class NeonCityGame {
   private measuredFps = 0;
   private readonly onGraphicsStatus: (status: GraphicsStatus) => void;
   private readonly configuredTextures = new Map<THREE.Texture, number>();
+  private readonly roadSurfaces: ReturnType<typeof finishNightRoad>[] = [];
   private averageFrame = 16.7;
   private qualityWarmup = 8;
   private qualitySampleTime = 0;
@@ -736,8 +740,7 @@ export class NeonCityGame {
     const wetRoadAlong = wetRoadAcross.clone();
     wetRoadAlong.map = alongTexture;
     wetRoadAlong.bumpMap = alongTexture;
-    finishNightRoad(wetRoadAcross);
-    finishNightRoad(wetRoadAlong);
+    this.roadSurfaces.push(finishNightRoad(wetRoadAcross), finishNightRoad(wetRoadAlong));
     const puddleGeometry = new THREE.CircleGeometry(1, 14);
     const puddleMaterial = new THREE.MeshStandardMaterial({
       color: 0x131a21,
@@ -1063,8 +1066,8 @@ export class NeonCityGame {
   setGraphicsQuality(preset: GraphicsQuality) {
     if (!isGraphicsQuality(preset)) return;
     this.graphicsQuality = preset;
-    // A deliberate selection stays exact until the player enables adaptation.
-    this.automaticGraphics = false;
+    // Presets choose the visual target; the Automatic switch independently
+    // controls adaptation, including when the player changes that target.
     this.qualityLevel = 0;
     saveGraphicsPreference(preset, this.automaticGraphics);
     this.resize();
@@ -1205,7 +1208,19 @@ export class NeonCityGame {
     const speedRatio = Math.min(this.velocity.length() / 76, 1);
     const driver = this.cameraView === 'driver';
     if (this.cameraView === 'person') {
-      this.cameraTarget.copy(this.person.position); this.cameraTarget.y += 1.14;
+      if (snap) this.personCameraTarget.copy(this.person.position);
+      else {
+        // Carry horizontal travel directly, so starts, stops and turns cannot
+        // change the boom's pitch. Ease terrain height for both eye and aim.
+        this.personCameraTravel.copy(this.person.position).sub(this.personCameraAnchor);
+        this.personCameraTravel.y = (this.person.position.y - this.personCameraTarget.y) * (1 - Math.exp(-delta * 4));
+        this.personCameraTarget.y += this.personCameraTravel.y;
+        this.camera.position.add(this.personCameraTravel);
+      }
+      this.personCameraAnchor.copy(this.person.position);
+      this.personCameraTarget.x = this.person.position.x;
+      this.personCameraTarget.z = this.person.position.z;
+      this.cameraTarget.copy(this.personCameraTarget); this.cameraTarget.y += 1.14;
       const distance = this.personCameraDistance * Math.max(1, .82 / this.camera.aspect);
       const horizontal = Math.cos(this.personCameraElevation) * distance;
       this.desiredCamera.set(this.cameraTarget.x + Math.sin(this.personCameraYaw) * horizontal,
@@ -1390,13 +1405,16 @@ export class NeonCityGame {
     this.renderer.setSize(width, height, false);
     this.composer.setSize(width, height);
     this.presentationPass.setPreset(this.graphicsQuality, this.qualityLevel);
-    this.island.aurora.setQuality(this.graphicsQuality === 'low' ? 3 : this.graphicsQuality === 'medium' ? 2 : 0);
+    this.island.aurora.setQuality(this.graphicsQuality === 'low' ? 3 : 0);
+    for (const surface of this.roadSurfaces) surface.setPreset(this.graphicsQuality, this.qualityLevel);
+    this.steam.setPreset(this.graphicsQuality, this.qualityLevel);
+    this.roadSnow.setPreset(this.graphicsQuality);
     // Glow is built in five small draws and added in the existing output draw.
     // Its appearance stays consistent instead of switching off while driving.
     this.bloomPass.enabled = true;
     this.bloomPass.strength = profile.bloomStrength;
     this.bloomPass.radius = this.graphicsQuality === 'ultra' ? .42 : .48;
-    this.bloomPass.setQuality(profile.bloomResolution);
+    this.bloomPass.setQuality(profile.bloomResolution * (1 - this.qualityLevel * .1));
     this.presentationPass.uniforms.bloomEnabled.value = 1;
     this.bloomPass.setSize(width * this.scenePixelRatio, height * this.scenePixelRatio);
     this.reflections.setPreset(this.graphicsQuality, this.qualityLevel);
@@ -1404,6 +1422,14 @@ export class NeonCityGame {
     this.drivingMirrors.setPreset(this.graphicsQuality, this.qualityLevel);
     // Retain shadows at every tier; reduce their capture size and refresh rate.
     this.renderer.shadowMap.enabled = true;
+    // Concentrate Ultra's texels around the player: 2K over forty metres has
+    // the same local precision as 3K over sixty, with much less capture work.
+    const shadowRange = this.graphicsQuality === 'ultra' ? 20 : 30;
+    const shadowCamera = this.keyLight.shadow.camera;
+    if (shadowCamera.right !== shadowRange) {
+      Object.assign(shadowCamera, { left: -shadowRange, right: shadowRange, top: shadowRange, bottom: -shadowRange });
+      shadowCamera.updateProjectionMatrix();
+    }
     const shadowSize = Math.max(256, Math.round(profile.shadowSize / (1 + this.qualityLevel * .3)));
     if (this.keyLight.shadow.mapSize.x !== shadowSize) {
       this.keyLight.shadow.mapSize.set(shadowSize, shadowSize);
@@ -1411,7 +1437,8 @@ export class NeonCityGame {
     }
     this.shadowPosition.set(Infinity, Infinity, Infinity); this.shadowFrame = 0;
     this.renderer.shadowMap.needsUpdate = true;
-    this.keyLight.shadow.radius = this.graphicsQuality === 'ultra' ? 1.8 : 1;
+    this.keyLight.shadow.radius = this.graphicsQuality === 'ultra' ? 2.1 : this.graphicsQuality === 'high' ? 1.45 : 1;
+    this.keyLight.shadow.normalBias = this.graphicsQuality === 'ultra' ? .025 : this.graphicsQuality === 'high' ? .035 : .045;
     this.snowfall.setDensity(profile.snowDensity);
     this.updateStreetLights(this.carPosition, profile.streetLights);
     this.updateCityVisibility(this.carPosition, this.qualityLevel, profile.detailScale);

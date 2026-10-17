@@ -15,7 +15,7 @@ export type Pedestrian = Position & {
 };
 
 const CROWD_BUDGET: Record<GraphicsQuality, { count: number; range: number }> = {
-  low: { count: 12, range: 80 }, medium: { count: 24, range: 105 },
+  low: { count: 12, range: 80 }, medium: { count: 32, range: 130 },
   high: { count: 32, range: 130 }, ultra: { count: 40, range: 155 },
 };
 const angleDifference = (a: number, b: number) => Math.atan2(Math.sin(a - b), Math.cos(a - b));

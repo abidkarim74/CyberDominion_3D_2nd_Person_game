@@ -113,7 +113,7 @@ export default function GraphicsSettings({ status, onQualityChange, onAutomaticC
       </section>
 
       <label className="graphics-auto" htmlFor="graphics-automatic" aria-label="Automatic quality">
-        <span><span className="graphics-auto-title">Automatic quality</span><span className="graphics-auto-copy">Find a smooth fit for this computer.</span></span>
+        <span><span className="graphics-auto-title">Automatic quality</span><span className="graphics-auto-copy">Keep motion smooth as the city gets busy.</span></span>
         <input id="graphics-automatic" type="checkbox" checked={status.automatic} onChange={(event) => onAutomaticChange(event.target.checked)} />
         <span className="graphics-auto-switch" aria-hidden="true" />
       </label>

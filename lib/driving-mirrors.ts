@@ -112,8 +112,8 @@ export function createDrivingMirrors(
       const load = THREE.MathUtils.clamp(Math.floor(pressure), 0, 4), key = `${preset}:${load}`;
       if (presetKey === key) return;
       presetKey = key;
-      const width = Math.max(96, Math.round(({ low: 128, medium: 192, high: 256, ultra: 384 }[preset]) * (1 - load * .1) / 32) * 32);
-      interval = (1 + load * .15) / ({ low: 6, medium: 9, high: 12, ultra: 20 }[preset]);
+      const width = Math.max(96, Math.round(({ low: 128, medium: 256, high: 320, ultra: 384 }[preset]) * (1 - load * .1) / 32) * 32);
+      interval = (1 + load * .15) / ({ low: 6, medium: 12, high: 15, ultra: 20 }[preset]);
       for (const mirror of mirrors) {
         const mirrorWidth = mirror.isRearview ? Math.round(width * 1.75 / 32) * 32 : width;
         mirror.target.setSize(mirrorWidth, Math.round(mirrorWidth / mirror.aspect)); mirror.capturedAt = -Infinity;

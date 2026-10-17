@@ -2,11 +2,22 @@ import * as THREE from 'three';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import type { GraphicsQuality } from './graphics-quality';
 
-/** Resolve edges, recover local detail and apply speed blur in the existing output draw. */
+const PRESENTATION_PROFILES = {
+  low: { resolve: .7, quality: 1, sharpness: .095, contrast: .012, falloff: 0, grade: [0, 0, 0, 0] },
+  // Medium inherits the former High resolve and detail treatment exactly.
+  medium: { resolve: .92, quality: 2, sharpness: .14, contrast: .035, falloff: 0, grade: [0, 0, 0, 0] },
+  high: { resolve: .97, quality: 3, sharpness: .17, contrast: .055, falloff: .012, grade: [.055, .04, .015, .075] },
+  ultra: { resolve: 1, quality: 4, sharpness: .20, contrast: .075, falloff: .025, grade: [.085, .06, .022, .12] },
+} satisfies Record<GraphicsQuality, {
+  resolve: number; quality: number; sharpness: number; contrast: number; falloff: number;
+  grade: [number, number, number, number];
+}>;
+
+/** Resolve edges, recover detail and finish HDR color in the existing output draw. */
 class DrivingPresentationPass extends OutputPass {
   constructor() {
     super();
-    this.material.name = 'City / edge and detail resolve, speed blur, filmic output';
+    this.material.name = 'City / edge and detail resolve, HDR neon finish, filmic output';
     this.uniforms.sourceTexel = { value: new THREE.Vector2(1, 1) };
     this.uniforms.strength = { value: 0 };
     this.uniforms.sharpness = { value: .12 };
@@ -14,6 +25,7 @@ class DrivingPresentationPass extends OutputPass {
     this.uniforms.resolveQuality = { value: 1 };
     this.uniforms.detailContrast = { value: 0 };
     this.uniforms.lensFalloff = { value: 0 };
+    this.uniforms.grading = { value: new THREE.Vector4() };
     this.uniforms.tBloom = { value: null };
     this.uniforms.bloomEnabled = { value: 0 };
     const resolve = /* glsl */ `
@@ -24,6 +36,8 @@ class DrivingPresentationPass extends OutputPass {
       uniform float resolveQuality;
       uniform float detailContrast;
       uniform float lensFalloff;
+      // Vibrance, gentle contrast, winter shadow balance, highlight hue recovery.
+      uniform vec4 grading;
       uniform sampler2D tBloom;
       uniform float bloomEnabled;
 
@@ -64,9 +78,11 @@ class DrivingPresentationPass extends OutputPass {
         float stopThreshold = max(.001, gradient * .25);
         bool startDone = abs(startLuma) >= stopThreshold;
         bool endDone = abs(endLuma) >= stopThreshold;
-        // Ultra follows longer silhouettes; High uses two short search steps.
+        // Medium retains the old High search; High extends it by one step.
+        // Ultra follows longer silhouettes without exceeding the old Ultra budget.
         for (int i = 0; i < 5; i++) {
           if (resolveQuality < 2.5 && i >= 2) break;
+          if (resolveQuality < 3.5 && i >= 3) break;
           if (startDone && endDone) break;
           float stepSize = i < 1 ? 1. : (i < 2 ? 1.5 : (i < 3 ? 2. : (i < 4 ? 4. : 8.)));
           if (!startDone) {
@@ -116,7 +132,7 @@ class DrivingPresentationPass extends OutputPass {
             if (resolveQuality > 1.5) {
               color = resolveEdge(uv, center, c, n, s, e, w, contrast);
             } else {
-              // The inexpensive resolve used by Low and Medium follows the tangent.
+              // Low's inexpensive resolve follows the tangent with two extra taps.
               vec2 tangent = vec2(-(n - s), e - w);
               float magnitude = max(abs(tangent.x), abs(tangent.y));
               if (magnitude > .001) {
@@ -145,11 +161,41 @@ class DrivingPresentationPass extends OutputPass {
         color *= 1. - lensFalloff * smoothstep(.08, .48, dot(lens, lens));
         return color;
       }
+
+      // Work in display-linear color after tone mapping. This keeps exposure and
+      // HDR reflections intact, and adds no texture fetches or fullscreen draws.
+      vec3 gradeImage(vec3 displayColor, vec3 sceneColor) {
+        if (dot(grading, vec4(1.)) < .0001) return displayColor;
+        vec3 color = max(displayColor, vec3(0.));
+        float peak = max(color.r, max(color.g, color.b));
+        float scenePeak = max(sceneColor.r, max(sceneColor.g, sceneColor.b));
+        float sceneLow = min(sceneColor.r, min(sceneColor.g, sceneColor.b));
+        float sceneSaturation = clamp((scenePeak - sceneLow) / max(scenePeak, .0001), 0., 1.);
+        // Recover a little of the neon's original hue after the filmic shoulder.
+        // Neutral snow, white headlamps and reflective glints receive no tint.
+        float recovery = grading.w * sceneSaturation
+          * smoothstep(1.2, 4., scenePeak * toneMappingExposure);
+        vec3 sceneHue = max(sceneColor, vec3(0.)) / max(scenePeak, .0001);
+        color = mix(color, sceneHue * peak, recovery);
+        float luminance = max(0., dot(color, vec3(.2126, .7152, .0722)));
+        float saturation = (peak - min(color.r, min(color.g, color.b))) / max(peak, .0001);
+        float vibrance = grading.x * (1. - saturation) * (1. - saturation);
+        color += (color - vec3(luminance)) * vibrance;
+        // Luminance-preserving cool shadows give the winter scene separation
+        // without lifting black, fogging the road or coloring bright snow.
+        float shadow = 1. - smoothstep(.025, .35, luminance);
+        vec3 balanced = color * vec3(1. - grading.z * shadow,
+          1. + grading.z * shadow * .12, 1. + grading.z * shadow * .8);
+        color = balanced * (luminance / max(dot(balanced, vec3(.2126, .7152, .0722)), .00000001));
+        color *= 1. + grading.y * (luminance - .18) * (1. - luminance);
+        return max(color, vec3(0.));
+      }
     `;
     // OutputPass still owns exposure, tone mapping and display color conversion.
     this.material.fragmentShader = this.material.fragmentShader
       .replace('void main() {', `${resolve}\nvoid main() {`)
-      .replace('gl_FragColor = texture2D( tDiffuse, vUv );', 'gl_FragColor = vec4(presentImage(vUv), 1.);');
+      .replace('gl_FragColor = texture2D( tDiffuse, vUv );', 'vec3 sceneColor = presentImage(vUv);\n gl_FragColor = vec4(sceneColor, 1.);')
+      .replace('// color space', 'gl_FragColor.rgb = gradeImage(gl_FragColor.rgb, sceneColor);\n\n // color space');
   }
 
   override setSize(width: number, height: number) {
@@ -163,18 +209,15 @@ class DrivingPresentationPass extends OutputPass {
 
   setPreset(preset: GraphicsQuality, pressure = 0) {
     const load = Number.isFinite(pressure) ? THREE.MathUtils.clamp(pressure, 0, 4) : 0;
-    const profiles = {
-      low: { resolve: .6, quality: 0, sharpness: .08, contrast: 0, falloff: 0 },
-      medium: { resolve: .82, quality: 1, sharpness: .12, contrast: .02, falloff: 0 },
-      high: { resolve: .92, quality: 2, sharpness: .14, contrast: .035, falloff: 0 },
-      ultra: { resolve: 1, quality: 3, sharpness: .16, contrast: .055, falloff: .035 },
-    } satisfies Record<GraphicsQuality, { resolve: number; quality: number; sharpness: number; contrast: number; falloff: number }>;
-    const profile = profiles[preset];
+    const profile = PRESENTATION_PROFILES[preset];
+    const quality = profile.quality > 2 && load >= 2
+      ? (load >= 3 ? 2 : profile.quality - 1) : profile.quality;
     this.uniforms.resolveStrength.value = profile.resolve;
-    this.uniforms.resolveQuality.value = profile.quality === 3 && load >= 2 ? 2 : profile.quality;
+    this.uniforms.resolveQuality.value = quality;
     this.uniforms.sharpness.value = profile.sharpness * (1 - load * .06);
     this.uniforms.detailContrast.value = profile.contrast * (1 - load * .08);
     this.uniforms.lensFalloff.value = profile.falloff;
+    this.uniforms.grading.value.fromArray(profile.grade);
   }
 }
 

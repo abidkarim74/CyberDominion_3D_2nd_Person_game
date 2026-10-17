@@ -3,13 +3,14 @@ import type { makeCar } from './cinematic-car';
 import { CAR_HALF_LENGTH, CAR_HALF_WIDTH, type ColliderGrid } from './city-collision';
 import { makeSnowContact, type SnowContact } from './snow-surface';
 import { stepVehicle, WHEEL_CONTACTS, type VehicleInput, type VehicleMotion } from './vehicle-dynamics';
+import { createTrafficLod } from './traffic-lod';
 
 export type TrafficMarker = { x: number; z: number; yaw: number; color: string };
 type CarRig = ReturnType<typeof makeCar>;
 type RoutePoint = { x: number; z: number; distance: number; curvature: number };
 type Route = { points: RoutePoint[]; length: number };
 type TrafficCar = {
-  id: number; rig: Pick<CarRig, 'car' | 'body' | 'wheels' | 'steering' | 'brakeLights' | 'reverseLights'>;
+  id: number; rig: Pick<CarRig, 'car' | 'body' | 'wheels' | 'steering' | 'brakeLights' | 'reverseLights'> & { lod: ReturnType<typeof createTrafficLod> };
   motion: VehicleMotion; previous: THREE.Vector3; contacts: SnowContact[];
   route: Route; progress: number; cruiseSpeed: number; input: VehicleInput;
   start: { position: THREE.Vector3; yaw: number; progress: number; wheelAngles: number[] };
@@ -127,8 +128,10 @@ function trafficRig(source: CarRig, color: number): TrafficCar['rig'] {
   }
   removed.forEach(object => object.removeFromParent());
   const copy = <T extends THREE.Object3D>(original: T) => copies.get(original) as T;
+  const brakeLights = source.brakeLights.map(copy), reverseLights = source.reverseLights.map(copy);
+  const lod = createTrafficLod(source.car, car, color, { headlights: source.headlights.map(copy), brakeLights, reverseLights });
   return { car, body: copy(source.body), wheels: source.wheels.map(copy), steering: source.steering.map(copy),
-    brakeLights: source.brakeLights.map(copy), reverseLights: source.reverseLights.map(copy) };
+    brakeLights, reverseLights, lod };
 }
 
 /** SAT also predicts crossing traffic without treating neighboring lanes as obstacles. */
@@ -172,6 +175,7 @@ export class AiTraffic {
   readonly markers: TrafficMarker[];
   collisions = 0;
   private pedestrian: THREE.Vector3 | null = null;
+  private detailedCarId = 0;
 
   setPedestrian(position: THREE.Vector3 | null) { this.pedestrian = position; }
 
@@ -205,6 +209,7 @@ export class AiTraffic {
   /** Return the complete launch grid immediately, including minimap and visual state. */
   reset() {
     this.collisions = 0;
+    this.detailedCarId = 0;
     for (const car of this.cars) {
       const { motion, rig, start } = car;
       motion.position.copy(start.position); motion.velocity.set(0, 0, 0);
@@ -221,6 +226,7 @@ export class AiTraffic {
       for (const pivot of rig.steering) pivot.rotation.y = 0;
       for (const light of rig.brakeLights) (light.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.6;
       for (const light of rig.reverseLights) (light.material as THREE.MeshStandardMaterial).emissiveIntensity = 0;
+      rig.lod.update(0, true, 0, 0, false, false);
       car.marker.x = start.position.x; car.marker.z = start.position.z; car.marker.yaw = start.yaw;
     }
   }
@@ -334,6 +340,14 @@ export class AiTraffic {
   }
 
   updateVisuals(delta: number, observer: THREE.Vector3) {
+    // Retain one complete model with a stable six-metre margin when cars pass.
+    let nearest = this.cars[this.detailedCarId];
+    let nearestDistance = nearest.motion.position.distanceTo(observer);
+    for (const candidate of this.cars) {
+      const distance = candidate.motion.position.distanceTo(observer);
+      if (distance + 6 < nearestDistance) { nearest = candidate; nearestDistance = distance; }
+    }
+    this.detailedCarId = nearest.id;
     for (const car of this.cars) {
       const { motion, rig } = car;
       motion.position.y = car.contacts.reduce((sum, c) => sum + c.height, 0) / 4 + .006;
@@ -345,6 +359,8 @@ export class AiTraffic {
       const ease = 1 - Math.exp(-delta * 8);
       rig.body.rotation.x += (clamp(motion.acceleration / 9.81 * .038, -.12, .12) - rig.body.rotation.x) * ease;
       rig.body.rotation.z += (clamp(-motion.yawRate * forwardSpeed / 9.81 * .055, -.12, .12) - rig.body.rotation.z) * ease;
+      rig.lod.update(motion.position.distanceToSquared(observer), car === nearest, rig.body.rotation.x, rig.body.rotation.z,
+        (car.input.brake ?? 0) > .05, forwardSpeed < -.5);
       for (const light of rig.brakeLights) (light.material as THREE.MeshStandardMaterial).emissiveIntensity = (car.input.brake ?? 0) > .05 ? 4.5 : 1.6;
       for (const light of rig.reverseLights) (light.material as THREE.MeshStandardMaterial).emissiveIntensity = forwardSpeed < -.5 ? 2.2 : 0;
       car.marker.x = motion.position.x; car.marker.z = motion.position.z; car.marker.yaw = motion.yaw;

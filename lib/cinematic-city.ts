@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { addCyberpunkDistrict, type DistrictInstanceCell } from './cyberpunk-district';
 import { GRAPHICS_PRESETS, type GraphicsQuality } from './graphics-quality';
 import { isCitySquare } from './city-layout';
+import { NIGHT_ROAD_SURFACE_GLSL } from './night-city-surfaces';
 
 const CYAN = 0x35cde8;
 const PINK = 0xff347f;
@@ -403,36 +404,46 @@ export function addCityDetail(scene: THREE.Scene) {
 
 export function wetStreetReflection(scene: THREE.Scene) {
   const mirror = new Reflector(new THREE.PlaneGeometry(800, 800), { textureWidth: 768, textureHeight: 432, clipBias: .002, multisample: 0 });
+  mirror.name = 'Road / wet asphalt reflections';
   mirror.rotation.x = -Math.PI / 2; mirror.position.y = .026;
   const material = mirror.material as THREE.ShaderMaterial;
   material.transparent = true; material.depthWrite = false;
   material.uniforms.time = { value: 0 };
   material.uniforms.reflectionSpread = { value: new THREE.Vector2(.001, .002) };
+  material.uniforms.reflectionGain = { value: 1.12 };
+  material.uniforms.highlightCompression = { value: .18 };
+  material.uniforms.reflectionReach = { value: 240 };
   material.vertexShader = `uniform mat4 textureMatrix;
     varying vec4 vUv; varying vec3 vWorld;
     void main() { vUv = textureMatrix * vec4(position,1.); vWorld = (modelMatrix * vec4(position,1.)).xyz;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }`;
   material.fragmentShader = `uniform sampler2D tDiffuse; uniform float time; uniform vec2 reflectionSpread;
+    uniform float reflectionGain; uniform float highlightCompression; uniform float reflectionReach;
     varying vec4 vUv; varying vec3 vWorld;
-    float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+    ${NIGHT_ROAD_SURFACE_GLSL}
     void main(){
       vec2 uv = vUv.xy / vUv.w;
+      float roadWetness=nightRoadWetness(vWorld.xz);
+      float cameraDistance=distance(cameraPosition,vWorld);
+      // Screen derivatives remove subpixel ripples before they can shimmer in motion.
+      float footprint=max(length(dFdx(vWorld.xz)),length(dFdy(vWorld.xz)));
       float ripple = sin(vWorld.z*18.+time*.7)*sin(vWorld.x*14.-time*.5);
-      float grain = hash(floor(vWorld.xz*85.));
-      float rippleFade = 1.-smoothstep(35.,90.,distance(cameraPosition,vWorld));
-      uv += vec2(ripple*.00015, ripple*.00025)*rippleFade;
+      float rippleFade=(1.-smoothstep(35.,95.,cameraDistance))*(1.-smoothstep(.025,.18,footprint));
+      uv += vec2(ripple*.00012, ripple*.0002)*rippleFade*roadWetness;
+      // Water-filled patches stay crisp; rougher asphalt spreads the same three samples.
+      vec2 spread=reflectionSpread*mix(1.65,.65,roadWetness);
       vec3 reflected = texture2D(tDiffuse,uv).rgb*.42;
-      reflected += texture2D(tDiffuse,uv+reflectionSpread).rgb*.29;
-      reflected += texture2D(tDiffuse,uv-reflectionSpread).rgb*.29;
+      reflected += texture2D(tDiffuse,uv+spread).rgb*.29;
+      reflected += texture2D(tDiffuse,uv-spread).rgb*.29;
       float grazing = 1.-clamp(normalize(cameraPosition-vWorld).y,0.,1.);
-      float wetness = .5+.5*smoothstep(.2,.8,sin(vWorld.x*.73+sin(vWorld.z*.36)));
-      // Asphalt stays visible: stronger wet patches beside the kerbs, weaker in the lanes.
-      vec2 block = abs(mod(vWorld.xz,44.)-22.);
-      float edge = smoothstep(5.8,8.6,min(block.x,block.y));
+      float grazing2=grazing*grazing;
+      float fresnel=.045+.955*grazing2*grazing2*grazing;
       float luminance = dot(reflected,vec3(.2126,.7152,.0722));
-      reflected *= min(1., .65 / max(luminance,.001));
-      float strength = (.022+pow(grazing,2.)*.25)*mix(.46,1.,edge)*wetness;
-      gl_FragColor=vec4(reflected*vec3(.8,.85,.9),strength*(.85+grain*.15));
+      // A soft shoulder keeps neon hue and HDR highlights instead of clipping them to gray.
+      reflected /= 1.+max(luminance,0.)*highlightCompression;
+      float distanceFade=1.-smoothstep(reflectionReach*.48,reflectionReach,cameraDistance);
+      float strength=(.018+fresnel*.48)*reflectionGain*roadWetness*distanceFade;
+      gl_FragColor=vec4(reflected*vec3(.86,.91,.96),strength);
     }`;
   // Captures follow the chosen budget, with occasional parked updates for animated city lights.
   const capture = mirror.onBeforeRender.bind(mirror);
@@ -452,15 +463,21 @@ export function wetStreetReflection(scene: THREE.Scene) {
   const previousRotation = new THREE.Quaternion();
   const cameraPosition = new THREE.Vector3();
   const cameraRotation = new THREE.Quaternion();
+  const cameraDirection = new THREE.Vector3();
   mirror.onBeforeRender = function(renderer, scene, camera, geometry, material, group) {
     const frame = captureFrame++;
     if (hasCapture && frame % captureCadence !== 2 % captureCadence) return;
     camera.getWorldPosition(cameraPosition); camera.getWorldQuaternion(cameraRotation);
+    // Looking into the sky does not need another complete city render.
+    camera.getWorldDirection(cameraDirection);
+    if (cameraPosition.y <= mirror.position.y || cameraDirection.y > .8) return;
     if (hasCapture && frame - lastCaptureFrame < parkedCadence && cameraPosition.distanceToSquared(previousPosition) < movementThreshold && 1 - Math.abs(cameraRotation.dot(previousRotation)) < rotationThreshold) return;
     if (!collected) {
       // The first render happens after weather and the car are installed. Keep references thereafter.
       scene.traverse(object => {
-        if (object instanceof THREE.Points || object instanceof THREE.Sprite || object.name.startsWith('Snow /') || object.userData.cockpitDetail || object.userData.excludeFromReflection) excluded.push(object);
+        const roadSurface = object instanceof THREE.Mesh && !Array.isArray(object.material) && object.material.userData.nightRoadSurface;
+        // The asphalt lies beneath the reflection clip plane and cannot contribute to a capture.
+        if (roadSurface || object instanceof THREE.Points || object instanceof THREE.Sprite || object.name.startsWith('Snow /') || object.userData.cockpitDetail || object.userData.excludeFromReflection) excluded.push(object);
       });
       collected = true;
     }
@@ -490,11 +507,14 @@ export function wetStreetReflection(scene: THREE.Scene) {
       // Pressure trims work within the selected tier; Ultra keeps a larger capture than High.
       const size = Math.max(128, Math.round(profile.reflectionSize * (1 - load * .1) / 64) * 64);
       captureCadence = Math.max(1, Math.round(profile.reflectionCadence * (1 + load * .45)));
-      parkedCadence = Math.max(captureCadence, (preset === 'ultra' ? 8 : preset === 'high' ? 24 : 72) * (1 + load));
-      movementThreshold = preset === 'ultra' ? .0001 : preset === 'high' ? .0025 : .0225;
+      parkedCadence = Math.max(captureCadence, (preset === 'ultra' ? 8 : preset === 'low' ? 72 : 24) * (1 + load));
+      movementThreshold = preset === 'ultra' ? .0001 : preset === 'low' ? .0225 : .0025;
       rotationThreshold = preset === 'ultra' ? .0000005 : .00004;
-      const spread = preset === 'ultra' ? .45 : preset === 'high' ? .65 : 1;
+      const spread = preset === 'ultra' ? .45 : preset === 'low' ? 1 : .65;
       material.uniforms.reflectionSpread.value.set(spread / size, spread * 1.5 / size);
+      material.uniforms.reflectionGain.value = { low: .8, medium: .98, high: 1.16, ultra: 1.34 }[preset];
+      material.uniforms.highlightCompression.value = { low: .4, medium: .25, high: .18, ultra: .13 }[preset];
+      material.uniforms.reflectionReach.value = { low: 140, medium: 200, high: 260, ultra: 310 }[preset];
       mirror.getRenderTarget().setSize(size, size);
       mirror.visible = true; hasCapture = false;
     },
@@ -506,6 +526,9 @@ export function wetStreetReflection(scene: THREE.Scene) {
       captureCadence = [6, 9, 14, 20, 28][quality]; parkedCadence = captureCadence * 8;
       movementThreshold = .0225; rotationThreshold = .00004;
       material.uniforms.reflectionSpread.value.set(.001, .002);
+      material.uniforms.reflectionGain.value = 1.12;
+      material.uniforms.highlightCompression.value = .18;
+      material.uniforms.reflectionReach.value = 240;
       const [width, height] = [[768, 432], [640, 360], [512, 288], [384, 216], [256, 144]][quality];
       mirror.getRenderTarget().setSize(width, height);
     },

@@ -11,6 +11,7 @@ type MotionBone = {
   modified: boolean;
 };
 type HierarchyNode = { object: THREE.Object3D; motion?: MotionBone };
+export type LocomotionMotion = { speed: number; acceleration: number; turnRate: number };
 
 const JOINTS: readonly Joint[] = [
   'Spine', 'Spine1', 'Spine2', 'Neck', 'Head',
@@ -45,6 +46,8 @@ export class PersonIdleMotion {
   private wasStanding = false;
   private standingWeight = 0;
   private seatedWeight = 0;
+  private travelPitch = 0;
+  private travelRoll = 0;
 
   constructor(private readonly model: THREE.Group) {
     const motions = new Map<THREE.Object3D, MotionBone>();
@@ -79,7 +82,7 @@ export class PersonIdleMotion {
   }
 
   /** Call after the mixer; ducking bends the authored pose to clear a doorway. */
-  update(dt: number, standing: boolean, seated: boolean, duck = 0) {
+  update(dt: number, standing: boolean, seated: boolean, duck = 0, locomotion?: LocomotionMotion) {
     const delta = Math.max(0, dt);
     const bend = THREE.MathUtils.clamp(duck, 0, 1);
     this.time += delta;
@@ -93,8 +96,23 @@ export class PersonIdleMotion {
     if (bend > 0 && !standing) this.standingWeight = 0;
     this.seatedWeight += (Number(seated) - this.seatedWeight)
       * (1 - Math.exp(-delta * (seated ? 3.5 : 12)));
+    if (locomotion) {
+      const movingWeight = THREE.MathUtils.smoothstep(locomotion.speed, .08, 1.2);
+      // The capture supplies the leg mechanics. Only distribute a restrained
+      // weight shift through the torso for acceleration and cornering, with a
+      // stabilising neck response so the gaze does not bob with the chest.
+      const pitch = movingWeight * (.025 * Math.min(1, locomotion.speed / 4.3)
+        + THREE.MathUtils.clamp(locomotion.acceleration * .007, -.040, .055));
+      const roll = movingWeight * THREE.MathUtils.clamp(-Math.atan(locomotion.speed * locomotion.turnRate / 9.81) * .23, -.12, .12);
+      const response = 1 - Math.exp(-delta * 9);
+      this.travelPitch += (pitch - this.travelPitch) * response;
+      this.travelRoll += (roll - this.travelRoll) * response;
+    } else {
+      // Clear at once on entry so a road corner cannot affect the seated arms.
+      this.travelPitch = this.travelRoll = 0;
+    }
     const stand = this.standingWeight, sit = this.seatedWeight;
-    if (stand + sit + bend < .0001) return;
+    if (stand + sit + bend + Math.abs(this.travelPitch) + Math.abs(this.travelRoll) < .0001) return;
 
     const t = this.time;
     // Start a new idle sequence after each stop. A glance and a hand adjustment
@@ -120,29 +138,29 @@ export class PersonIdleMotion {
       let pitch = 0, yaw = 0, roll = 0;
       switch (motion.joint) {
         case 'Spine':
-          pitch = stand * (.008 * breath + .006 * Math.sin(t * .23)) + bend * .23;
+          pitch = stand * (.008 * breath + .006 * Math.sin(t * .23)) + bend * .23 + this.travelPitch * .42;
           yaw = stand * .07 * glance;
-          roll = stand * sway * .40;
+          roll = stand * sway * .40 + this.travelRoll * .42;
           break;
         case 'Spine1':
-          pitch = stand * .010 * breath + sit * .0015 * breath + bend * .24;
+          pitch = stand * .010 * breath + sit * .0015 * breath + bend * .24 + this.travelPitch * .33;
           yaw = stand * .09 * glance;
-          roll = stand * sway * .32;
+          roll = stand * sway * .32 + this.travelRoll * .33;
           break;
         case 'Spine2':
-          pitch = stand * .012 * breath + sit * .0015 * breath + bend * .18;
+          pitch = stand * .012 * breath + sit * .0015 * breath + bend * .18 + this.travelPitch * .25;
           yaw = stand * .13 * glance;
-          roll = stand * sway * .28;
+          roll = stand * sway * .28 + this.travelRoll * .25;
           break;
         case 'Neck':
-          pitch = headWeight * (.035 * lookDown + .013 * Math.sin(t * .37 + 1.3)) + bend * .055;
+          pitch = headWeight * (.035 * lookDown + .013 * Math.sin(t * .37 + 1.3)) + bend * .055 - this.travelPitch * .25;
           yaw = headWeight * .28 * glance;
-          roll = headWeight * .007 * Math.sin(t * .31 + .5);
+          roll = headWeight * .007 * Math.sin(t * .31 + .5) - this.travelRoll * .20;
           break;
         case 'Head':
-          pitch = headWeight * (.14 * lookDown + .022 * Math.sin(t * .37 + .8)) + bend * .075;
+          pitch = headWeight * (.14 * lookDown + .022 * Math.sin(t * .37 + .8)) + bend * .075 - this.travelPitch * .35;
           yaw = headWeight * .69 * glance;
-          roll = headWeight * .012 * Math.sin(t * .31 + 1.1);
+          roll = headWeight * .012 * Math.sin(t * .31 + 1.1) - this.travelRoll * .30;
           break;
         case 'LeftShoulder':
           pitch = stand * (.015 * breath - .025 * leftAdjust);
