@@ -1,0 +1,13 @@
+artifacts
+artifacts/**
+scripts
+scripts/**
+dist
+dist/**
+.wrangler
+.wrangler/**
+.openai
+.openai/**
+.vinext
+.vinext/**
+*.tsbuildinfo
